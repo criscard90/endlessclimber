@@ -992,7 +992,7 @@ function create() {
     player = this.physics.add.sprite(200, startY, 'player');
     player.setBounce(0.1);
     player.setCircle(14, 2, 2);
-    player.body.setMaxVelocityY(400); // Limita velocità caduta per evitare tunneling
+    player.body.setMaxVelocityY(800); // Limita velocità caduta per evitare tunneling (salto -850 passa)
     bestY = player.y;
 
     // Camera vera: segue il giocatore in entrambe le direzioni.
@@ -1307,7 +1307,7 @@ function update(time, delta) {
             let bm = 1 + 0.06 * upLevels.bounce;
             let holdTime = keyDownTime > 0 ? (this.time.now - keyDownTime) : 0;
             let charged = holdTime > 150;
-            player.setVelocityY((charged ? -850 : -600) * bm);
+            player.setVelocityY((charged ? -900 : -700) * bm);
             sfxJump(charged);
             player.squashing = true;
             player.setScale(1.25, 0.75);
@@ -1439,11 +1439,11 @@ function jumpOnPlatform(player, platform) {
     let charged = holdTime > 150;
     let power;
     if (type === 'spring') {
-        power = -950;
+        power = -1000;
         beep(500, 0.2, 'triangle', 0.08, 1100);
     } else {
         let bm = 1 + 0.06 * upLevels.bounce;
-        power = (charged ? -850 : -600) * bm;
+        power = (charged ? -900 : -700) * bm;
         if (type === 'normal') sfxJump(charged);
     }
     player.setVelocityY(power);
