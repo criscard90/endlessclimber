@@ -126,16 +126,16 @@ let tutObjs = [];
 
 // ---------- BOSS ----------
 const BOSSES = [
-    { key: 'GLITCH',     score: 1500,  hp: 1 },
-    { key: 'FIREWALL',   score: 3000,  hp: 0 },
-    { key: 'MALWARE',    score: 4500,  hp: 3 },
-    { key: 'TROJAN',     score: 6000,  hp: 1 },
-    { key: 'WORM',       score: 7500,  hp: 6 },
-    { key: 'DDOS',       score: 9000,  hp: 3 },
-    { key: 'RANSOMWARE', score: 11000, hp: 1 },
-    { key: 'DATALOSS',   score: 13000, hp: 0 },
-    { key: 'ROOTKIT',    score: 15000, hp: 2 },
-    { key: 'AI',         score: 18000, hp: 5 }
+    { key: 'GLITCH',     height: 3000,  hp: 1 },
+    { key: 'FIREWALL',   height: 6000,  hp: 0 },
+    { key: 'MALWARE',    height: 9000,  hp: 3 },
+    { key: 'TROJAN',     height: 12000, hp: 1 },
+    { key: 'WORM',       height: 15000, hp: 6 },
+    { key: 'DDOS',       height: 18000, hp: 3 },
+    { key: 'RANSOMWARE', height: 22000, hp: 1 },
+    { key: 'DATALOSS',   height: 26000, hp: 0 },
+    { key: 'ROOTKIT',    height: 30000, hp: 2 },
+    { key: 'AI',         height: 36000, hp: 5 }
 ];
 let boss = null;        // boss corrente
 let bossIndex = 0;      // prossimo boss da affrontare
@@ -1276,8 +1276,8 @@ function update(time, delta) {
         chargeRing.clear();
     }
 
-    // BOSS: spawn per soglia punteggio, poi update + render
-    if (bossIndex < BOSSES.length && !boss && score >= BOSSES[bossIndex].score) {
+    // BOSS: spawn per soglia di ALTEZZA pura (px saliti), le monete non contano
+    if (bossIndex < BOSSES.length && !boss && (570 - bestY) >= BOSSES[bossIndex].height) {
         spawnBoss(this);
     }
     if (boss) {
