@@ -1045,11 +1045,19 @@ function create() {
     this.input.keyboard.on('keydown-S', () => toggleStats(this));
     this.input.keyboard.on('keydown', initAudio);
 
+    // Tracciamento pressione tasti per salto caricato (PC)
+    let keyDownTime = 0;
+    this.input.keyboard.on('keydown-UP', () => { if (keyDownTime === 0) keyDownTime = this.time.now; });
+    this.input.keyboard.on('keydown-SPACE', () => { if (keyDownTime === 0) keyDownTime = this.time.now; });
+    this.input.keyboard.on('keyup-UP', () => { keyDownTime = 0; });
+    this.input.keyboard.on('keyup-SPACE', () => { keyDownTime = 0; });
+
     // Controlli Touch JOYSTICK: il dito trascinato determina la direzione
     // Il salto caricato si attiva tenendo premuto il dito per >150ms
     this.input.on('pointerdown', (pointer) => {
         initAudio();
         lastTapT = this.time.now;
+        keyDownTime = this.time.now; // anche touch conta
         joyStartX = pointer.x;
         joyDir = 0;
         touchX = pointer.x;
@@ -1066,7 +1074,7 @@ function create() {
             touchX = pointer.x;
         }
     });
-    this.input.on('pointerup', () => { touchX = null; joyStartX = null; joyDir = 0; isHolding = false; });
+    this.input.on('pointerup', () => { touchX = null; joyStartX = null; joyDir = 0; isHolding = false; keyDownTime = 0; });
 
     // Anello di carica touch (feedback del salto caricato)
     bulletG = this.add.graphics().setDepth(3);
@@ -1297,8 +1305,8 @@ function update(time, delta) {
         });
         if (onWobbly) {
             let bm = 1 + 0.06 * upLevels.bounce;
-            let holdTime = isHolding ? (this.time.now - lastTapT) : 0;
-            let charged = (holdTime > 150) || cursors.up.isDown || spaceBar.isDown;
+            let holdTime = keyDownTime > 0 ? (this.time.now - keyDownTime) : 0;
+            let charged = holdTime > 150;
             player.setVelocityY((charged ? -850 : -600) * bm);
             sfxJump(charged);
             player.squashing = true;
@@ -1426,9 +1434,9 @@ function jumpOnPlatform(player, platform) {
         }
     }
 
-    // Salto caricato: su mobile tiene premuto per >150ms, su PC tiene premuto SPAZIO/SU
-    let holdTime = isHolding ? (this.time.now - lastTapT) : 0;
-    let charged = (holdTime > 150) || cursors.up.isDown || spaceBar.isDown;
+    // Salto caricato: tenendo premuto per >150ms (touch o tasto)
+    let holdTime = keyDownTime > 0 ? (this.time.now - keyDownTime) : 0;
+    let charged = holdTime > 150;
     let power;
     if (type === 'spring') {
         power = -950;
