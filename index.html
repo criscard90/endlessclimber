@@ -121,6 +121,7 @@ let creditsHud = null;
 let chargedTouch = false;   // doppio-tap rapido: la presa corrente carica il salto
 let lastTapT = 0;           // timestamp dell'ultimo tap
 let chargeRing = null;
+let jumpPressedEdge = false; // un tap/tasto premuto questo frame (per i traballanti)
 let tutorialActive = false;
 let tutObjs = [];
 
@@ -1048,6 +1049,7 @@ function create() {
         lastTapT = now;
         touchX = pointer.x;
         isHolding = true;
+        jumpPressedEdge = true;
     });
     this.input.on('pointermove', (pointer) => { if (pointer.isDown) touchX = pointer.x; });
     this.input.on('pointerup', () => { touchX = null; isHolding = false; chargedTouch = false; });
@@ -1249,6 +1251,33 @@ function update(time, delta) {
             }
         });
     }
+
+    // Sui TRABALLANTI il salto e' manuale: se sei in piedi e premi/tocchi, salti
+    // (non c'e' auto-rimbalzo, quindi senza questo non potresti piu' partire)
+    if (player.body.touching.down && (jumpPressedEdge ||
+        Phaser.Input.Keyboard.JustDown(spaceBar) ||
+        Phaser.Input.Keyboard.JustDown(cursors.up))) {
+        let onWobbly = false;
+        platforms.children.iterate(child => {
+            if (child && child.getData('type') === 'wobbly' &&
+                Math.abs(player.x - child.x) < 46 &&
+                Math.abs(player.y - (child.y - 12)) < 22) onWobbly = true;
+        });
+        if (onWobbly) {
+            let bm = 1 + 0.06 * upLevels.bounce;
+            let powerful = chargedTouch || cursors.up.isDown || spaceBar.isDown;
+            player.setVelocityY((powerful ? -680 : -470) * bm);
+            sfxJump(powerful);
+            player.squashing = true;
+            player.setScale(1.25, 0.75);
+            this.tweens.add({
+                targets: player, scaleX: 1, scaleY: 1,
+                duration: 140, ease: 'Back.easeOut',
+                onComplete: () => { player.squashing = false; }
+            });
+        }
+    }
+    jumpPressedEdge = false;
 
     // MAGNET: le monete vicine vengono attirate verso il player
     let magR = [0, 70, 110, 150][upLevels.magnet];
