@@ -94,7 +94,6 @@ let gameOver = false;
 let touchX = null;
 let joyStartX = null;  // posizione iniziale del tocco per il joystick
 let joyDir = 0;        // direzione joystick: -1 sinistra, 0 fermo, +1 destra
-let chargedTouchTime = 0; // timestamp dell'ultimo doppio-tap (scade dopo 400ms)
 let bgGradient;
 
 // Feel upgrades
@@ -121,9 +120,7 @@ let upLevels = { control: 0, bounce: 0, magnet: 0, shield: 0, boost: 0 };
 let shieldCharges = 0;
 let shieldRing = null;
 let creditsHud = null;
-let chargedTouch = false;   // doppio-tap rapido: la presa corrente carica il salto
-let lastTapT = 0;           // timestamp dell'ultimo tap
-let chargeRing = null;
+let lastTapT = 0;           // timestamp dell'ultimo tap (per salto caricato)
 let jumpPressedEdge = false; // un tap/tasto premuto questo frame (per i traballanti)
 let tutorialActive = false;
 let tutObjs = [];
@@ -1049,15 +1046,10 @@ function create() {
     this.input.keyboard.on('keydown', initAudio);
 
     // Controlli Touch JOYSTICK: il dito trascinato determina la direzione
-    // (delta rispetto al punto di tocco iniziale). La palla continua a muoversi
-    // nella direzione dello swipe -> il wrap pacman funziona.
-    // Il DOPPIO TAP rapido (due tap entro 300ms) tiene premuto "caricato" -> salto alto.
+    // Il salto caricato si attiva tenendo premuto il dito per >150ms
     this.input.on('pointerdown', (pointer) => {
         initAudio();
-        let now = this.time.now;
-        chargedTouch = (now - lastTapT) < 300;
-        if (chargedTouch) chargedTouchTime = now;
-        lastTapT = now;
+        lastTapT = this.time.now;
         joyStartX = pointer.x;
         joyDir = 0;
         touchX = pointer.x;
@@ -1067,7 +1059,7 @@ function create() {
     this.input.on('pointermove', (pointer) => {
         if (pointer.isDown && joyStartX !== null) {
             let dx = pointer.x - joyStartX;
-            let deadzone = 18;  // zona morta per evitare movimenti accidentali
+            let deadzone = 18;
             if (dx > deadzone) joyDir = 1;
             else if (dx < -deadzone) joyDir = -1;
             else joyDir = 0;
@@ -1075,55 +1067,38 @@ function create() {
         }
     });
     this.input.on('pointerup', () => { touchX = null; joyStartX = null; joyDir = 0; isHolding = false; });
-    // NOTA: chargedTouch NON viene resettato qui — scade da solo dopo 400ms (vedi sotto)
 
     // Anello di carica touch (feedback del salto caricato)
-    chargeRing = this.add.graphics().setDepth(2);
     bulletG = this.add.graphics().setDepth(3);
 
     // Ghost della best height storica
     ghostLine = this.add.graphics().setDepth(1);
     drawGhostLine(this);
 
-    // UI Punteggio
-    scoreText = this.add.text(20, 20, 'SCORE: 000000', { 
-        fontSize: '18px', 
-        fill: '#ffffff', 
-        fontFamily: 'Courier New, monospace', 
-        fontStyle: 'bold' 
+    // UI semplificata: solo score e crediti
+    scoreText = this.add.text(10, 10, 'SCORE 0', {
+        fontSize: '14px', fill: '#ffffff', fontFamily: 'Courier New, monospace', fontStyle: 'bold',
+        stroke: '#000000', strokeThickness: 2
     }).setScrollFactor(0);
     if (canUseGlow(this)) {
         scoreText.setPostPipeline('GlowFX');
     }
 
-    // HUD crediti (bank + monete raccolte in questa run): 1 moneta = 1 credito
-    creditsHud = this.add.text(300, 20, 'CREDITS: ' + (credits + runCoins), {
+    creditsHud = this.add.text(390, 10, 'CR ' + (credits + runCoins), {
         fontSize: '14px', fill: C_YELLOW_CSS, fontFamily: 'Courier New, monospace', fontStyle: 'bold',
-        stroke: '#000000', strokeThickness: 3
-    }).setScrollFactor(0);
+        stroke: '#000000', strokeThickness: 2
+    }).setOrigin(1, 0).setScrollFactor(0);
 
-    // Bottone STATS mobile (angolo in alto a destra)
-    let statsBtn = this.add.text(380, 40, '[STATS]', {
-        fontSize: '11px', fill: '#00f0ff', fontFamily: 'Courier New, monospace', fontStyle: 'bold',
-        backgroundColor: '#020617', padding: { x: 4, y: 2 }
+    // Bottone STATS (mobile)
+    let statsBtn = this.add.text(390, 30, '[STATS]', {
+        fontSize: '10px', fill: '#00f0ff', fontFamily: 'Courier New, monospace', fontStyle: 'bold',
+        backgroundColor: '#020617', padding: { x: 3, y: 1 }
     }).setOrigin(1, 0).setScrollFactor(0).setInteractive({ useHandCursor: true });
     statsBtn.on('pointerdown', () => toggleStats(this));
 
-    // Hint audio (tasto M per muto/suono)
-    musicHint = this.add.text(370, 60, 'M: AUDIO', {
-        fontSize: '10px', fill: '#55607a', fontFamily: 'Courier New, monospace'
-    }).setOrigin(1, 0).setScrollFactor(0);
-
-    // Hint stats (tasto S)
-    this.add.text(370, 48, 'S: STATS', {
-        fontSize: '10px', fill: '#55607a', fontFamily: 'Courier New, monospace'
-    }).setOrigin(1, 0).setScrollFactor(0);
-    this.add.text(10, 48, 'DOPPIO TAP = SALTO ALTO', {
-        fontSize: '10px', fill: '#55607a', fontFamily: 'Courier New, monospace'
-    }).setScrollFactor(0);
     this.input.keyboard.on('keydown-M', toggleMusic);
 
-    // Tutorial solo alla prima apertura (flag in localStorage)
+    // Tutorial solo alla prima apertura
     let tutSeen = false;
     try { tutSeen = !!localStorage.getItem('neonjump_tutseen'); } catch (e) { }
     if (!tutSeen) startTutorial(this);
@@ -1322,9 +1297,10 @@ function update(time, delta) {
         });
         if (onWobbly) {
             let bm = 1 + 0.06 * upLevels.bounce;
-            let powerful = chargedTouch || cursors.up.isDown || spaceBar.isDown;
-            player.setVelocityY((powerful ? -750 : -550) * bm);
-            sfxJump(powerful);
+            let holdTime = isHolding ? (this.time.now - lastTapT) : 0;
+            let charged = (holdTime > 150) || cursors.up.isDown || spaceBar.isDown;
+            player.setVelocityY((charged ? -850 : -600) * bm);
+            sfxJump(charged);
             player.squashing = true;
             player.setScale(1.25, 0.75);
             this.tweens.add({
@@ -1353,13 +1329,6 @@ function update(time, delta) {
         shieldRing.strokeCircle(player.x, player.y, 21);
     } else {
         shieldRing.clear();
-    }
-    if (chargedTouch) {
-        chargeRing.clear();
-        chargeRing.lineStyle(2, 0xfff700, 0.8);
-        chargeRing.strokeCircle(player.x, player.y, 17);
-    } else {
-        chargeRing.clear();
     }
 
     // BOSS: spawn per soglia di ALTEZZA pura (px saliti), le monete non contano
@@ -1416,8 +1385,6 @@ function updateScoreText() {
 
 function jumpOnPlatform(player, platform) {
     if (!player.body.touching.down) return;
-    // Il salto caricato scade dopo 400ms dal doppio-tap (non viene resettato al pointerup)
-    if (chargedTouch && (this.time.now - chargedTouchTime) > 400) chargedTouch = false;
     let type = platform.getData('type') || 'normal';
 
     // TRABALLANTE: non rimbalza, inclina e fa scivolare (puro Getting Over It)
@@ -1459,15 +1426,17 @@ function jumpOnPlatform(player, platform) {
         }
     }
 
-    // Potenza del salto
+    // Salto caricato: su mobile tiene premuto per >150ms, su PC tiene premuto SPAZIO/SU
+    let holdTime = isHolding ? (this.time.now - lastTapT) : 0;
+    let charged = (holdTime > 150) || cursors.up.isDown || spaceBar.isDown;
     let power;
     if (type === 'spring') {
-        power = -950; // molta piu' spinta, indipendente dal salto caricato
+        power = -950;
         beep(500, 0.2, 'triangle', 0.08, 1100);
     } else {
         let bm = 1 + 0.06 * upLevels.bounce;
-        power = ((cursors.up.isDown || spaceBar.isDown || chargedTouch) ? -750 : -550) * bm;
-        if (type === 'normal') sfxJump(cursors.up.isDown || spaceBar.isDown || chargedTouch);
+        power = (charged ? -850 : -600) * bm;
+        if (type === 'normal') sfxJump(charged);
     }
     player.setVelocityY(power);
 
