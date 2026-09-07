@@ -1363,6 +1363,11 @@ function jumpOnPlatform(player, platform) {
 
     // TRABALLANTE: non rimbalza, inclina e fa scivolare (puro Getting Over It)
     if (type === 'wobbly') {
+        // Il callback di collisione scatta OGNI FRAME mentre si tocca la pedana:
+        // senza debounce il tilt alternerebbe direzione 60 volte al secondo (vibrazione)
+        let now = this.time.now;
+        if (now - (platform.getData('lastTilt') || 0) < 500) return;
+        platform.setData('lastTilt', now);
         let tilt = platform.getData('tilt') + 1;
         platform.setData('tilt', tilt);
         let dir = (tilt % 2 === 0) ? 1 : -1;
@@ -1374,6 +1379,9 @@ function jumpOnPlatform(player, platform) {
 
     // FRAGILE: conta i salti; al secondo scoppia (dopo che il rimbalzo e' partito)
     if (type === 'fragile') {
+        let now = this.time.now;
+        if (now - (platform.getData('lastHit') || 0) < 300) return; // debounce contatti
+        platform.setData('lastHit', now);
         let hits = platform.getData('hits') + 1;
         platform.setData('hits', hits);
         if (hits >= 2) {
