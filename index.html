@@ -992,6 +992,7 @@ function create() {
     player = this.physics.add.sprite(200, startY, 'player');
     player.setBounce(0.1);
     player.setCircle(14, 2, 2);
+    player.body.setMaxVelocityY(500);  // anti-tunneling: limite caduta (piattaforme sono 16px)
     bestY = player.y;
 
     // Camera vera: segue il giocatore in entrambe le direzioni.
