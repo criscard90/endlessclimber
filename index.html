@@ -1173,7 +1173,29 @@ function update(time, delta) {
         isMoving = true;
     }
     let accelStep = accel * (delta / 1000);
-    player.body.velocity.x += Phaser.Math.Clamp(targetVx - player.body.velocity.x, -accelStep, accelStep);
+    // Se il player è su un traballante inclinato, la pendenza lo spinge
+    // e NON viene decelerato verso 0 (altrimenti resta fermo sulla pendenza)
+    let onSlope = false;
+    let slopePush = 0;
+    if (player.body.touching.down) {
+        platforms.children.iterate(child => {
+            if (child && child.getData('type') === 'wobbly' && Math.abs(child.angle) > 1 &&
+                Math.abs(player.x - child.x) < 46 &&
+                Math.abs(player.y - (child.y - 12)) < 22) {
+                onSlope = true;
+                slopePush = child.angle * 8; // forza di scivolamento proporzionale all'inclinazione
+            }
+        });
+    }
+    if (onSlope) {
+        // Sulla pendenza: nessuna deceleranza, la forza di scivolamento si accumula
+        // (contrabile muovendosi verso l'alto, ma stando fermi si scivola)
+        player.body.velocity.x += slopePush * (delta / 1000) * 60;
+        // Limita la velocità di scivolamento per non essere frustrante
+        player.body.velocity.x = Phaser.Math.Clamp(player.body.velocity.x, -200, 200);
+    } else {
+        player.body.velocity.x += Phaser.Math.Clamp(targetVx - player.body.velocity.x, -accelStep, accelStep);
+    }
 
     // Gestione emissione scia
     if (isMoving || Math.abs(player.body.velocity.y) > 100) {
