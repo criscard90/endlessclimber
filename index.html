@@ -1528,6 +1528,10 @@ function triggerGameOver(scene, reason) {
     runCoins = 0;
     saveUpgrades();
 
+    // Ferma la musica boss: resetta il loop alla traccia normale
+    bossActive = false;
+    songQueue = ['A', 'A', 'B', 'B']; queuePos = 0; sectionStep = 0;
+
     trailEmitter.stop();
     player.setVisible(false);
     if (shieldRing) shieldRing.clear();
