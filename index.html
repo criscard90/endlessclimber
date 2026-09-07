@@ -124,6 +124,25 @@ let chargeRing = null;
 let tutorialActive = false;
 let tutObjs = [];
 
+// ---------- BOSS ----------
+const BOSSES = [
+    { key: 'GLITCH',     score: 1500,  hp: 1 },
+    { key: 'FIREWALL',   score: 3000,  hp: 0 },
+    { key: 'MALWARE',    score: 4500,  hp: 3 },
+    { key: 'TROJAN',     score: 6000,  hp: 1 },
+    { key: 'WORM',       score: 7500,  hp: 6 },
+    { key: 'DDOS',       score: 9000,  hp: 3 },
+    { key: 'RANSOMWARE', score: 11000, hp: 1 },
+    { key: 'DATALOSS',   score: 13000, hp: 0 },
+    { key: 'ROOTKIT',    score: 15000, hp: 2 },
+    { key: 'AI',         score: 18000, hp: 5 }
+];
+let boss = null;        // boss corrente
+let bossIndex = 0;      // prossimo boss da affrontare
+let bossBullets = [];   // proiettili {x, y, vx, vy}
+let bossActive = false; // usato dal music engine
+let bulletG = null;
+
 // Palette per zona
 const ZONES = [
     { top: 0x020617, bottom: 0x0f172a },  // 0: blu notte (base)
@@ -316,7 +335,10 @@ function musicTick() {
         if (sectionStep >= PATTERNS[songQueue[queuePos]].len) {
             sectionStep = 0;
             let finished = songQueue[queuePos];
-            if (finished === 'S') {
+            if (bossActive) {
+                // boss vivo: la sezione special gira in loop senza fine
+                songQueue = ['S', 'S']; queuePos = 0;
+            } else if (finished === 'S') {
                 // la special dura una sola passata: rimuovila e riprendi il loop normale
                 songQueue.splice(queuePos, 1);
                 specialQueued = false;
@@ -355,6 +377,373 @@ function toggleMusic() {
     musicOn = !musicOn;
     if (musicGain) musicGain.gain.value = musicOn ? 0.9 : 0;
     if (musicHint) musicHint.setText(musicOn ? 'M: AUDIO ON' : 'M: AUDIO OFF');
+}
+
+// ---------- MOTORE BOSS ----------
+function spawnBoss(scene) {
+    let def = BOSSES[bossIndex];
+    boss = {
+        def: def, type: def.key, hp: def.hp, maxHp: Math.max(def.hp, 1),
+        x: Phaser.Math.Between(100, 300),
+        y: player.y - 450,
+        t: 0, st: 0, state: 'coin', phase: 0,
+        vx: (Math.random() < 0.5 ? -1 : 1) * 60,
+        r: 20, cool: 1.5, vulnerable: true,
+        hist: [], key: null, keyTaken: false, rise: 0, alphaV: 1,
+        g: scene.add.graphics().setDepth(3)
+    };
+    if (def.key === 'DATALOSS') boss.y = player.y + 420; // sale dal basso
+    if (def.key === 'FIREWALL') boss.y = player.y - 260;
+    bossActive = true;
+    songQueue = ['S', 'S']; queuePos = 0; sectionStep = 0; // musica boss: special in loop
+    bossBannerText(scene, 'BOSS: ' + def.key, '#ff0033');
+    beep(110, 0.6, 'sawtooth', 0.1, 55);
+}
+
+function bossBannerText(scene, txt, color) {
+    let banner = scene.add.text(200, 220, txt, {
+        fontSize: '24px', fill: color, fontFamily: 'Courier New, monospace', fontStyle: 'bold'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(5).setAlpha(0);
+    scene.tweens.add({ targets: banner, alpha: 1, duration: 250, yoyo: true, hold: 1100, onComplete: () => banner.destroy() });
+}
+
+function endBoss(scene, defeated) {
+    if (defeated) {
+        deathEmitter.emitParticleAt(boss.x, boss.y, 30);
+        bossBannerText(scene, 'BOSS SCONFITTO!', C_CYAN_CSS);
+        beep(523, 0.12, 'square', 0.08);
+        setTimeout(() => beep(659, 0.12, 'square', 0.08), 130);
+        setTimeout(() => beep(784, 0.25, 'square', 0.09), 260);
+        score += 1000;
+        updateScoreText();
+    }
+    boss.g.destroy();
+    boss = null;
+    bossBullets = [];
+    bossIndex++;
+    bossActive = false;
+    songQueue = ['A', 'A', 'B', 'B']; queuePos = 0; sectionStep = 0;
+}
+
+function hitBoss(scene, dmg) {
+    boss.hp -= dmg;
+    beep(180, 0.12, 'square', 0.08, 90);
+    if (boss.hp <= 0) endBoss(scene, true);
+}
+
+function damagePlayer(scene) {
+    if (shieldCharges > 0) {
+        shieldCharges--;
+        beep(440, 0.15, 'triangle', 0.07, 220);
+        scene.cameras.main.flash(150, 255, 255, 255);
+        return;
+    }
+    triggerGameOver(scene, 'HACKERATO!');
+}
+
+function bossOverlap(cx, cy, r) {
+    return Math.hypot(player.x - cx, player.y - cy) < r + 11;
+}
+
+function bossStomp(cy) {
+    return player.body.velocity.y > 0 && player.y < cy - 2;
+}
+
+// ---------- UPDATE BOSS (comportamenti) ----------
+function updateBoss(scene, delta) {
+    if (!boss) return;
+    let d = delta / 1000;
+    let b = boss, type = b.type;
+    b.t += d;
+    let followY = player.y - 150;
+    if (player.y < b.y - 520 && type !== 'DATALOSS') { endBoss(scene, false); return; }
+
+    if (type === 'GLITCH') {
+        b.x += b.vx * d;
+        if (b.x < 50 || b.x > 350) b.vx *= -1;
+        b.y += (followY - b.y) * 0.4 * d;
+        b.r = 18 + Math.sin(b.t * 20) * 3;
+    } else if (type === 'FIREWALL') {
+        b.y += (player.y - 240 - b.y) * 0.5 * d;
+        b.gap = 200 + Math.sin(b.t * 0.8) * 150;
+        if (Math.abs(player.y - b.y) < 16 && (player.x < b.gap - 45 || player.x > b.gap + 45)) {
+            damagePlayer(scene); return;
+        }
+        if (player.y < b.y - 320) { endBoss(scene, false); return; }
+    } else if (type === 'MALWARE') {
+        let spd = (70 + (b.maxHp - b.hp) * 40) * d;
+        let dx = player.x - b.x, dy = (player.y - 140) - b.y;
+        let dist = Math.hypot(dx, dy) || 1;
+        b.x += dx / dist * spd; b.y += dy / dist * spd;
+        b.r = 22 * (0.7 + 0.3 * (b.hp / b.maxHp));
+    } else if (type === 'TROJAN') {
+        b.st += d;
+        if (b.state === 'coin') {
+            b.y += (followY - b.y) * 0.6 * d;
+            if (bossOverlap(b.x, b.y, 130)) { b.state = 'dash'; b.st = 0; beep(600, 0.1, 'square', 0.07, 200); }
+        } else if (b.state === 'dash') {
+            let dx = player.x - b.x, dy = player.y - b.y, dist = Math.hypot(dx, dy) || 1;
+            b.x += dx / dist * 280 * d; b.y += dy / dist * 280 * d;
+            if (b.st > 0.5) { b.state = 'rest'; b.st = 0; }
+        } else if (b.st > 1.2) {
+            b.state = 'coin'; b.st = 0;
+            b.x = Phaser.Math.Between(80, 320);
+            b.y = player.y - 260;
+        }
+    } else if (type === 'WORM') {
+        b.x = 200 + Math.sin(b.t * 1.2) * 150;
+        b.y += ((player.y - 200) - b.y) * 0.8 * d;
+        b.hist.unshift({ x: b.x, y: b.y });
+        if (b.hist.length > 80) b.hist.pop();
+        if (bossOverlap(b.x, b.y, 14)) {
+            if (bossStomp(b.y)) { endBoss(scene, true); return; }
+            damagePlayer(scene); return;
+        }
+        for (let i = 1; i < 6; i++) {
+            let seg = b.hist[Math.min(b.hist.length - 1, i * 9)];
+            if (seg && bossOverlap(seg.x, seg.y, 11)) { damagePlayer(scene); return; }
+        }
+    } else if (type === 'DDOS') {
+        b.x = 200 + Math.sin(b.t * 0.6) * 60;
+        b.y += (followY - b.y) * 0.5 * d;
+        b.cool -= d;
+        if (b.cool <= 0) {
+            for (let i = -2; i <= 2; i++) bossBullets.push({ x: b.x, y: b.y + 15, vx: i * 45, vy: 190 });
+            b.cool = 4.2; b.state = 'hot'; b.st = 0;
+        }
+        if (b.state === 'hot') { b.st += d; if (b.st > 2.5) b.state = 'fire'; }
+        if (bossOverlap(b.x, b.y, b.r)) {
+            if (bossStomp(b.y)) {
+                if (b.state === 'hot') { hitBoss(scene, 1); if (!boss) return; }
+                player.setVelocityY(-650);
+                return;
+            }
+            damagePlayer(scene); return;
+        }
+    }
+    if (type === 'RANSOMWARE') {
+        b.x += (200 - b.x) * 0.5 * d;
+        b.y += (player.y - 170 - b.y) * 0.8 * d;
+        let blink = Math.floor(b.t / 1.2) % 2 === 0;
+        platforms.children.iterate(p => {
+            if (p && Math.abs(p.y - b.y) < 260) p.alpha = blink ? 0.12 : 1;
+        });
+        if (!b.keyTaken) {
+            if (!b.key) b.key = { x: b.x, y: b.y - 180 };
+            b.key.y = b.y - 180 + Math.sin(b.t * 3) * 8;
+            if (bossOverlap(b.key.x, b.key.y, 16)) {
+                b.keyTaken = true; b.key = null;
+                bossBannerText(scene, 'SCUDO RIMOSSO!', '#fff700');
+                beep(880, 0.15, 'triangle', 0.08, 1300);
+            }
+        }
+        if (bossOverlap(b.x, b.y, 26)) {
+            if (bossStomp(b.y)) {
+                if (b.keyTaken) { endBoss(scene, true); return; }
+                player.setVelocityY(-650);
+                return;
+            }
+            damagePlayer(scene); return;
+        }
+    } else if (type === 'DATALOSS') {
+        b.rise += 60 * d;
+        b.y -= 60 * d;
+        b.x += (player.x - b.x) * 0.2 * d;
+        platforms.children.iterate(p => {
+            if (p && Math.abs(p.y - b.y) < 70 && Math.abs(p.x - b.x) < 90) p.destroy();
+        });
+        if (bossOverlap(b.x, b.y, 34)) { damagePlayer(scene); return; }
+        if (player.y < b.y - 300 || b.rise > 2400) { endBoss(scene, false); return; }
+    } else if (type === 'ROOTKIT') {
+        b.st += d;
+        if (b.state === 'vis') {
+            if (b.st > 2.5) { b.state = 'invis'; b.st = 0; }
+        } else if (b.st > 2.2) {
+            b.state = 'vis'; b.st = 0;
+            b.x = Phaser.Math.Between(70, 330);
+            b.y = player.y - Phaser.Math.Between(140, 260);
+            beep(900, 0.08, 'square', 0.05, 300);
+        }
+        b.alphaV = b.state === 'vis'
+            ? Math.min(1, b.alphaV + d * 4)
+            : Math.max(0, b.alphaV - d * 4);
+        if (b.state === 'vis' && bossOverlap(b.x, b.y, b.r)) {
+            if (bossStomp(b.y)) {
+                hitBoss(scene, 1);
+                if (!boss) return;
+                player.setVelocityY(-650);
+                return;
+            }
+            damagePlayer(scene); return;
+        }
+    } else if (type === 'AI') {
+        b.y += (followY - b.y) * 0.6 * d;
+        b.phase = b.hp >= 4 ? 1 : (b.hp >= 2 ? 2 : 3);
+        if (b.phase === 1) {
+            b.x = 200 + Math.sin(b.t * 0.7) * 80;
+            b.cool -= d;
+            if (b.cool <= 0) {
+                for (let i = -2; i <= 2; i++) bossBullets.push({ x: b.x, y: b.y + 18, vx: i * 55, vy: 200 });
+                b.cool = 2.2;
+            }
+            b.vulnerable = true;
+        } else if (b.phase === 2) {
+            b.x = 200 + Math.sin(b.t * 0.9) * 100;
+            b.state = Math.floor(b.t / 2.4) % 2 === 0 ? 'vis' : 'invis';
+            b.vulnerable = b.state === 'vis';
+        } else {
+            b.st += d;
+            if (b.state !== 'dash' && b.st > 0.8) {
+                b.state = 'dash'; b.st = 0;
+                b.dashX = player.x; b.dashY = player.y - 60;
+            }
+            if (b.state === 'dash') {
+                let dx = b.dashX - b.x, dy = b.dashY - b.y, dd = Math.hypot(dx, dy) || 1;
+                b.x += dx / dd * 420 * d; b.y += dy / dd * 420 * d;
+                if (dd < 14) { b.state = 'rest'; b.st = 0; }
+            }
+            b.vulnerable = true;
+        }
+        if (bossOverlap(b.x, b.y, b.r + 6)) {
+            if (bossStomp(b.y)) {
+                if (b.vulnerable) {
+                    hitBoss(scene, 1);
+                    if (!boss) return;
+                }
+                player.setVelocityY(-650);
+                return;
+            }
+            damagePlayer(scene); return;
+        }
+    }
+
+    if (type === 'GLITCH' || type === 'MALWARE') {
+        if (bossOverlap(b.x, b.y, b.r)) {
+            if (bossStomp(b.y)) {
+                hitBoss(scene, 1);
+                if (!boss) return;
+                player.setVelocityY(-650);
+                return;
+            }
+            damagePlayer(scene); return;
+        }
+    } else if (type === 'TROJAN') {
+        if (b.state !== 'coin' && bossOverlap(b.x, b.y, 20)) {
+            if (b.state === 'rest' && bossStomp(b.y)) { endBoss(scene, true); return; }
+            damagePlayer(scene); return;
+        }
+    }
+}
+
+// ---------- RENDER BOSS ----------
+function drawBoss(b, g) {
+    g.clear();
+    let t = b.t;
+    if (b.type === 'GLITCH') {
+        let s = 15 + Math.sin(t * 20) * 3;
+        g.fillStyle(Math.floor(t * 10) % 2 ? 0xff0033 : 0x99001f, 0.9);
+        g.fillRect(b.x - s, b.y - s * (0.8 + Math.sin(t * 13) * 0.2), s * 2, s * 2);
+    } else if (b.type === 'FIREWALL') {
+        let gx = b.gap || 200;
+        g.fillStyle(0xff9d00, 0.9);
+        g.fillRect(0, b.y - 10, gx - 45, 20);
+        g.fillRect(gx + 45, b.y - 10, 400 - (gx + 45), 20);
+        g.fillStyle(0xffffff, 0.8);
+        g.fillRect(gx - 49, b.y - 12, 4, 24);
+        g.fillRect(gx + 45, b.y - 12, 4, 24);
+    } else if (b.type === 'MALWARE') {
+        g.fillStyle(0x660099, 0.95);
+        g.fillCircle(b.x, b.y, b.r);
+        g.lineStyle(3, 0xff00ff, 0.9);
+        for (let i = 0; i < 8; i++) {
+            let a = t * 2 + i * Math.PI / 4;
+            g.lineBetween(b.x + Math.cos(a) * b.r, b.y + Math.sin(a) * b.r,
+                b.x + Math.cos(a) * (b.r + 8), b.y + Math.sin(a) * (b.r + 8));
+        }
+    } else if (b.type === 'TROJAN') {
+        if (b.state === 'coin') {
+            g.fillStyle(0xffd700, 1);
+            g.fillCircle(b.x, b.y, 20 + Math.sin(t * 6) * 2);
+            g.lineStyle(3, 0xffffff, 0.8);
+            g.strokeCircle(b.x, b.y, 20);
+        } else {
+            g.fillStyle(0xff0033, 1);
+            g.fillTriangle(b.x, b.y - 22, b.x - 20, b.y + 16, b.x + 20, b.y + 16);
+        }
+    } else if (b.type === 'WORM') {
+        for (let i = 5; i >= 0; i--) {
+            let seg = b.hist[Math.min(b.hist.length - 1, i * 9)];
+            if (!seg) continue;
+            g.fillStyle(0x00ff66, i === 0 ? 1 : Math.max(0.25, 0.7 - i * 0.08));
+            g.fillCircle(seg.x, seg.y, i === 0 ? 13 : 11 - i);
+        }
+    } else if (b.type === 'DDOS') {
+        let hot = b.state === 'hot';
+        g.fillStyle(hot ? 0x888888 : 0x0066ff, 0.95);
+        g.fillCircle(b.x, b.y, 20);
+        g.lineStyle(2, hot ? 0xcccccc : 0x00ccff, 0.8);
+        g.strokeCircle(b.x, b.y, 26 + Math.sin(t * 6) * 3);
+    } else if (b.type === 'RANSOMWARE') {
+        g.fillStyle(0xff0033, 0.9);
+        g.fillRect(b.x - 20, b.y - 10, 40, 32);
+        g.lineStyle(5, 0xffd700, 1);
+        g.beginPath(); g.arc(b.x, b.y - 10, 14, Math.PI, 0); g.strokePath();
+        g.fillStyle(0x000000, 1);
+        g.fillCircle(b.x - 8, b.y + 2, 3.5);
+        g.fillCircle(b.x + 8, b.y + 2, 3.5);
+        if (!b.keyTaken && b.key) {
+            g.fillStyle(0xffd700, 1);
+            g.fillCircle(b.key.x, b.key.y, 10);
+            g.lineStyle(2, 0xffffff, 0.9);
+            g.strokeCircle(b.key.x, b.key.y, 14);
+        }
+    } else if (b.type === 'DATALOSS') {
+        g.fillStyle(0x000000, 1);
+        g.fillCircle(b.x, b.y, 32);
+        g.lineStyle(3, 0x00f0ff, 0.7 + Math.sin(t * 8) * 0.2);
+        g.strokeCircle(b.x, b.y, 38 + Math.sin(t * 5) * 5);
+    } else if (b.type === 'ROOTKIT') {
+        g.fillStyle(0xcccccc, b.alphaV);
+        g.fillRect(b.x - 14, b.y - 14, 28, 28);
+        g.lineStyle(2, 0xffffff, b.alphaV * 0.8);
+        g.strokeRect(b.x - 14, b.y - 14, 28, 28);
+    } else if (b.type === 'AI') {
+        let c = Phaser.Display.Color.HSVToRGB((t * 0.4) % 1, 0.9, 1).color;
+        let pts = [
+            { x: b.x, y: b.y - 26 }, { x: b.x + 24, y: b.y - 8 }, { x: b.x + 16, y: b.y + 22 },
+            { x: b.x - 16, y: b.y + 22 }, { x: b.x - 24, y: b.y - 8 }
+        ];
+        g.fillStyle(c, 0.9);
+        g.fillPoints(pts, true);
+        g.lineStyle(2, 0xffffff, 0.7);
+        g.strokePoints(pts, true, true);
+    }
+    if (b.maxHp > 1) {
+        for (let i = 0; i < b.maxHp; i++) {
+            g.fillStyle(i < b.hp ? 0xff0033 : 0x444444, 1);
+            g.fillCircle(b.x - (b.maxHp - 1) * 7 + i * 14, b.y - 42, 4);
+        }
+    }
+}
+
+function updateBossBullets(scene, delta) {
+    let d = delta / 1000;
+    for (let i = bossBullets.length - 1; i >= 0; i--) {
+        let bl = bossBullets[i];
+        bl.x += bl.vx * d;
+        bl.y += bl.vy * d;
+        if (Math.hypot(player.x - bl.x, player.y - bl.y) < 12) {
+            bossBullets.splice(i, 1);
+            damagePlayer(scene);
+            continue;
+        }
+        if (bl.y > scene.cameras.main.scrollY + 700) bossBullets.splice(i, 1);
+    }
+    bulletG.clear();
+    bossBullets.forEach(bl => {
+        bulletG.fillStyle(0x00ccff, 0.9);
+        bulletG.fillCircle(bl.x, bl.y, 5);
+    });
 }
 
 // ---------- GHOST DELLA BEST HEIGHT ----------
@@ -564,6 +953,10 @@ function create() {
     loadPersisted();
     loadUpgrades();
     shieldCharges = upLevels.shield;
+    boss = null;
+    bossIndex = 0;
+    bossBullets = [];
+    bossActive = false;
 
     // Sfondo Gradiente (segue la camera in scorrimento verticale)
     bgGradient = this.add.graphics().setScrollFactor(0);
@@ -661,6 +1054,7 @@ function create() {
 
     // Anello di carica touch (feedback del salto caricato)
     chargeRing = this.add.graphics().setDepth(2);
+    bulletG = this.add.graphics().setDepth(3);
 
     // Ghost della best height storica
     ghostLine = this.add.graphics().setDepth(1);
@@ -728,6 +1122,7 @@ function startTutorial(scene) {
         [200, 430, 'Se cadi, il livello resta li\': risali!', '11px', '#ffffff', false],
         [200, 452, 'ARANCIO=fragile  VERDE=molla', '10px', '#8899aa', false],
         [200, 468, 'BLU=mobile  GIALLO=traballante', '10px', '#8899aa', false],
+        [200, 484, 'Ad ogni zona: un BOSS! Salta in testa', '10px', '#ff0033', false],
         [200, 498, 'Gli upgrade si comprano al game over', '11px', '#8899aa', false]
     ];
     lines.forEach(([x, y, txt, size, color, bold]) => {
@@ -880,6 +1275,16 @@ function update(time, delta) {
     } else {
         chargeRing.clear();
     }
+
+    // BOSS: spawn per soglia punteggio, poi update + render
+    if (bossIndex < BOSSES.length && !boss && score >= BOSSES[bossIndex].score) {
+        spawnBoss(this);
+    }
+    if (boss) {
+        updateBoss(this, delta);
+        if (boss) drawBoss(boss, boss.g);
+    }
+    updateBossBullets(this, delta);
 
     // Safety: se cadi oltre la zona di culling (più piattaforme presenti) → game over
     if (player.y > cullLine) {
