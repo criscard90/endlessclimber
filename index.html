@@ -121,6 +121,7 @@ let shieldCharges = 0;
 let shieldRing = null;
 let creditsHud = null;
 let lastTapT = 0;           // timestamp dell'ultimo tap (per salto caricato)
+let keyDownTime = 0;        // timestamp pressione tasto/touch per salto caricato
 let jumpPressedEdge = false; // un tap/tasto premuto questo frame (per i traballanti)
 let tutorialActive = false;
 let tutObjs = [];
@@ -1046,7 +1047,6 @@ function create() {
     this.input.keyboard.on('keydown', initAudio);
 
     // Tracciamento pressione tasti per salto caricato (PC)
-    let keyDownTime = 0;
     this.input.keyboard.on('keydown-UP', () => { if (keyDownTime === 0) keyDownTime = this.time.now; });
     this.input.keyboard.on('keydown-SPACE', () => { if (keyDownTime === 0) keyDownTime = this.time.now; });
     this.input.keyboard.on('keyup-UP', () => { keyDownTime = 0; });
