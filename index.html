@@ -1109,15 +1109,15 @@ function create() {
     statsBtn.on('pointerdown', () => toggleStats(this));
 
     // Hint audio (tasto M per muto/suono)
-    musicHint = this.add.text(370, 578, 'M: AUDIO', {
+    musicHint = this.add.text(370, 60, 'M: AUDIO', {
         fontSize: '10px', fill: '#55607a', fontFamily: 'Courier New, monospace'
     }).setOrigin(1, 0).setScrollFactor(0);
 
     // Hint stats (tasto S)
-    this.add.text(370, 562, 'S: STATS', {
+    this.add.text(370, 48, 'S: STATS', {
         fontSize: '10px', fill: '#55607a', fontFamily: 'Courier New, monospace'
     }).setOrigin(1, 0).setScrollFactor(0);
-    this.add.text(10, 578, 'DOPPIO TAP = SALTO ALTO', {
+    this.add.text(10, 48, 'DOPPIO TAP = SALTO ALTO', {
         fontSize: '10px', fill: '#55607a', fontFamily: 'Courier New, monospace'
     }).setScrollFactor(0);
     this.input.keyboard.on('keydown-M', toggleMusic);
@@ -1622,70 +1622,82 @@ function toggleStats(scene) {
 }
 
 function drawStats(scene) {
+    // Pannello centrato compatto (non a tutto schermo)
+    let panelW = 340, panelH = 480;
+    let px = (400 - panelW) / 2;
+    let py = (600 - panelH) / 2;
+
     let bg = scene.add.graphics().setScrollFactor(0).setDepth(100);
-    bg.fillStyle(0x020617, 0.95);
-    bg.fillRect(0, 0, 400, 600);
+    bg.fillStyle(0x020617, 0.97);
+    bg.fillRoundedRect(px, py, panelW, panelH, 8);
+    bg.lineStyle(2, 0x00f0ff, 0.6);
+    bg.strokeRoundedRect(px, py, panelW, panelH, 8);
     statsObjs.push(bg);
 
-    let title = scene.add.text(200, 30, 'STATS', {
-        fontSize: '28px', fill: C_CYAN_CSS, fontFamily: 'Courier New, monospace', fontStyle: 'bold'
+    let cy = py + 35;
+    let title = scene.add.text(200, cy, 'STATS', {
+        fontSize: '24px', fill: C_CYAN_CSS, fontFamily: 'Courier New, monospace', fontStyle: 'bold'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
     statsObjs.push(title);
+    cy += 35;
 
-    let bhText = scene.add.text(200, 80, 'BEST HEIGHT: ' + Math.floor(bestHeight) + 'px', {
-        fontSize: '16px', fill: '#ffffff', fontFamily: 'Courier New, monospace'
+    let bhText = scene.add.text(200, cy, 'BEST HEIGHT: ' + Math.floor(bestHeight) + 'px', {
+        fontSize: '15px', fill: '#ffffff', fontFamily: 'Courier New, monospace'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
     statsObjs.push(bhText);
+    cy += 35;
 
-    let bossTitle = scene.add.text(200, 130, 'BOSS SCONFITTI', {
-        fontSize: '18px', fill: C_YELLOW_CSS, fontFamily: 'Courier New, monospace', fontStyle: 'bold'
+    let bossTitle = scene.add.text(200, cy, 'BOSS SCONFITTI', {
+        fontSize: '16px', fill: C_YELLOW_CSS, fontFamily: 'Courier New, monospace', fontStyle: 'bold'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
     statsObjs.push(bossTitle);
-
-    let yPos = 170;
-    for (let i = 0; i < bossIndex && i < BOSSES.length; i++) {
-        let b = BOSSES[i];
-        let badge = scene.add.graphics().setScrollFactor(0).setDepth(101);
-        drawMiniBoss(badge, 60, yPos, b.key);
-        statsObjs.push(badge);
-
-        let nameText = scene.add.text(120, yPos - 10, b.key, {
-            fontSize: '14px', fill: '#ffffff', fontFamily: 'Courier New, monospace', fontStyle: 'bold'
-        }).setScrollFactor(0).setDepth(101);
-        statsObjs.push(nameText);
-
-        let hpText = scene.add.text(120, yPos + 8, 'HP: ' + b.hp + '  |  HEIGHT: ' + b.height + 'px', {
-            fontSize: '11px', fill: '#aaaaaa', fontFamily: 'Courier New, monospace'
-        }).setScrollFactor(0).setDepth(101);
-        statsObjs.push(hpText);
-
-        yPos += 55;
-    }
+    cy += 30;
 
     if (bossIndex === 0) {
-        let noneText = scene.add.text(200, 200, 'NESSUN BOSS SCONFITTO', {
-            fontSize: '14px', fill: '#666666', fontFamily: 'Courier New, monospace'
+        let noneText = scene.add.text(200, cy, 'NESSUN BOSS SCONFITTO', {
+            fontSize: '13px', fill: '#666666', fontFamily: 'Courier New, monospace'
         }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
         statsObjs.push(noneText);
+        cy += 30;
+    } else {
+        for (let i = 0; i < bossIndex && i < BOSSES.length; i++) {
+            let b = BOSSES[i];
+            let badge = scene.add.graphics().setScrollFactor(0).setDepth(101);
+            drawMiniBoss(badge, px + 35, cy, b.key);
+            statsObjs.push(badge);
+
+            let nameText = scene.add.text(px + 65, cy - 8, b.key, {
+                fontSize: '13px', fill: '#ffffff', fontFamily: 'Courier New, monospace', fontStyle: 'bold'
+            }).setScrollFactor(0).setDepth(101);
+            statsObjs.push(nameText);
+
+            let hpText = scene.add.text(px + 65, cy + 8, 'HP:' + b.hp + '  H:' + b.height + 'px', {
+                fontSize: '10px', fill: '#aaaaaa', fontFamily: 'Courier New, monospace'
+            }).setScrollFactor(0).setDepth(101);
+            statsObjs.push(hpText);
+
+            cy += 40;
+        }
     }
 
-    let upTitle = scene.add.text(200, yPos + 20, 'UPGRADE', {
-        fontSize: '16px', fill: C_CYAN_CSS, fontFamily: 'Courier New, monospace', fontStyle: 'bold'
+    cy += 10;
+    let upTitle = scene.add.text(200, cy, 'UPGRADE', {
+        fontSize: '15px', fill: C_CYAN_CSS, fontFamily: 'Courier New, monospace', fontStyle: 'bold'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
     statsObjs.push(upTitle);
+    cy += 28;
 
-    let upY = yPos + 50;
     UPGRADES.forEach(u => {
         let lvl = upLevels[u.key] || 0;
-        let upText = scene.add.text(200, upY, u.name + ' Lv.' + lvl + '/' + u.max, {
-            fontSize: '13px', fill: lvl > 0 ? C_YELLOW_CSS : '#666666', fontFamily: 'Courier New, monospace'
+        let upText = scene.add.text(200, cy, u.name + ' Lv.' + lvl + '/' + u.max, {
+            fontSize: '12px', fill: lvl > 0 ? C_YELLOW_CSS : '#666666', fontFamily: 'Courier New, monospace'
         }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
         statsObjs.push(upText);
-        upY += 22;
+        cy += 20;
     });
 
-    let closeText = scene.add.text(200, 570, 'PREMI S PER CHIUDERE', {
-        fontSize: '12px', fill: '#888888', fontFamily: 'Courier New, monospace'
+    let closeText = scene.add.text(200, py + panelH - 20, 'PREMI S PER CHIUDERE', {
+        fontSize: '11px', fill: '#888888', fontFamily: 'Courier New, monospace'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
     statsObjs.push(closeText);
 }
