@@ -88,7 +88,7 @@ let score = 0;
 let scoreText;
 let bestY = 0;          // Altezza massima raggiunta (per il punteggio)
 let nextSpawnY = 0;     // Prossima Y dove generare piattaforme (mondo fisso)
-const SPAWN_GAP = 150;  // Distanza verticale tra piattaforme (spazio per saltare)
+const SPAWN_GAP = 140;  // Distanza verticale tra piattaforme (spazio per saltare)
 const CULL_MARGIN = 1200; // Distanza sotto la camera oltre cui fare culling
 let gameOver = false;
 let touchX = null;
@@ -1307,7 +1307,7 @@ function update(time, delta) {
             let bm = 1 + 0.06 * upLevels.bounce;
             let holdTime = keyDownTime > 0 ? (this.time.now - keyDownTime) : 0;
             let charged = holdTime > 150;
-            player.setVelocityY((charged ? -750 : -500) * bm);
+            player.setVelocityY((charged ? -800 : -550) * bm);
             sfxJump(charged);
             player.squashing = true;
             player.setScale(1.25, 0.75);
@@ -1445,7 +1445,7 @@ function jumpOnPlatform(player, platform) {
         this.tweens.add({ targets: platform, scaleX: 1.3, scaleY: 0.6, duration: 100, yoyo: true });
     } else {
         let bm = 1 + 0.06 * upLevels.bounce;
-        power = (charged ? -750 : -500) * bm;
+        power = (charged ? -800 : -550) * bm;
         if (type === 'normal') sfxJump(charged);
     }
     player.setVelocityY(power);
