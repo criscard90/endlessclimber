@@ -148,6 +148,7 @@ let statsObjs = [];       // oggetti grafici degli stats (per nasconderli)
 let bossBullets = [];   // proiettili {x, y, vx, vy}
 let bossActive = false; // usato dal music engine
 let bulletG = null;
+let prevPlayerY = 0;    // Y precedente per CCD anti-tunneling
 
 // Palette per zona
 const ZONES = [
@@ -909,13 +910,13 @@ function preload() {
     g.generateTexture('player', 32, 32);
     g.clear();
 
-    // 2. Texture Piattaforma (una per tipo)
+    // 2. Texture Piattaforma (una per tipo) - spesse 40px per prevenire tunneling
     function makePlatformTex(key, color) {
         g.lineStyle(3, 0xffffff, 1);
         g.fillStyle(color, 0.35);
-        g.fillRoundedRect(0, 0, 80, 24, 4);
-        g.strokeRoundedRect(0, 0, 80, 24, 4);
-        g.generateTexture(key, 80, 24);
+        g.fillRoundedRect(0, 0, 80, 40, 4);
+        g.strokeRoundedRect(0, 0, 80, 40, 4);
+        g.generateTexture(key, 80, 40);
         g.clear();
     }
     makePlatformTex('platform', C_PURPLE);      // normale
@@ -1193,6 +1194,9 @@ function dismissTutorial(scene) {
 function update(time, delta) {
     if (gameOver || tutorialActive) return;
 
+    // Salva Y precedente per CCD anti-tunneling
+    prevPlayerY = player.y;
+
     // Movimento: accelerazione progressiva, potenziata dall'upgrade CONTROL
     let isMoving = false;
     let cLvl = upLevels.control;
@@ -1398,6 +1402,29 @@ function update(time, delta) {
     if (climbed > bestHeight) {
         bestHeight = climbed;
         drawGhostLine(this);
+    }
+
+    // CCD anti-tunneling: se la palla sta cadendo e non tocca il suolo,
+    // controlla se ha attraversato una piattaforma e riposizionala sopra
+    if (player.body.velocity.y > 0 && !player.body.touching.down) {
+        platforms.children.iterate(plat => {
+            if (!plat || plat.getData('type') === 'wobbly') return; // skip traballanti (non rimbalzano)
+            let platTop = plat.y - 20; // metà altezza piattaforma (40px)
+            let platLeft = plat.x - 40;
+            let platRight = plat.x + 40;
+            let playerBottom = player.y + 14; // raggio palla
+            // Se la palla era sopra la piattaforma prima e ora è dentro/sotto
+            if (prevPlayerY + 14 <= platTop + 5 && playerBottom >= platTop &&
+                player.x > platLeft - 10 && player.x < platRight + 10) {
+                // Riposiziona la palla sopra la piattaforma
+                player.y = platTop - 14;
+                player.body.velocity.y = 0;
+                player.body.touching.down = true;
+                // Triggera la logica di rimbalzo manualmente
+                jumpOnPlatform(player, plat);
+                return true; // stop iteration
+            }
+        });
     }
 }
 
