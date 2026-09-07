@@ -514,13 +514,20 @@ function preload() {
     g.generateTexture('player', 32, 32);
     g.clear();
 
-    // 2. Texture Piattaforma
-    g.lineStyle(3, 0xffffff, 1);
-    g.fillStyle(C_PURPLE, 0.3);
-    g.fillRoundedRect(0, 0, 80, 16, 4);
-    g.strokeRoundedRect(0, 0, 80, 16, 4);
-    g.generateTexture('platform', 80, 16);
-    g.clear();
+    // 2. Texture Piattaforma (una per tipo)
+    function makePlatformTex(key, color) {
+        g.lineStyle(3, 0xffffff, 1);
+        g.fillStyle(color, 0.35);
+        g.fillRoundedRect(0, 0, 80, 16, 4);
+        g.strokeRoundedRect(0, 0, 80, 16, 4);
+        g.generateTexture(key, 80, 16);
+        g.clear();
+    }
+    makePlatformTex('platform', C_PURPLE);      // normale
+    makePlatformTex('plat_fragile', 0xff9d00);  // fragile: scoppia
+    makePlatformTex('plat_spring', 0x00ff9d);   // molla: salto potenziato
+    makePlatformTex('plat_moving', 0x00b3ff);   // mobile: oscilla
+    makePlatformTex('plat_wobbly', 0xfff700);   // traballante: inclina
 
     // 3. Texture Moneta
     g.lineStyle(2, 0xffffff, 1);
@@ -719,7 +726,9 @@ function startTutorial(scene) {
         [200, 390, 'Ogni 1500px: nuova zona + musica boss', '11px', '#ffffff', false],
         [200, 410, 'Non toccare i nemici rossi!', '11px', '#ff0033', false],
         [200, 430, 'Se cadi, il livello resta li\': risali!', '11px', '#ffffff', false],
-        [200, 475, 'Gli upgrade si comprano al game over', '11px', '#8899aa', false]
+        [200, 452, 'ARANCIO=fragile  VERDE=molla', '10px', '#8899aa', false],
+        [200, 468, 'BLU=mobile  GIALLO=traballante', '10px', '#8899aa', false],
+        [200, 498, 'Gli upgrade si comprano al game over', '11px', '#8899aa', false]
     ];
     lines.forEach(([x, y, txt, size, color, bold]) => {
         let t = scene.add.text(x, y, txt, {
@@ -824,6 +833,28 @@ function update(time, delta) {
         }
     });
 
+    // Piattaforme MOBILI: oscillazione orizzontale (static body aggiornato a mano)
+    platforms.children.iterate(child => {
+        if (!child || child.getData('type') !== 'moving') return;
+        let t = child.getData('t') + delta / 1000;
+        child.setData('t', t);
+        let oldX = child.x;
+        child.x = child.getData('baseX') + Math.sin(t * 1.5) * 60;
+        child.body.updateFromGameObject();
+        child.setData('dx', child.x - oldX);
+    });
+
+    // Il player in piedi su una mobile viene trasportato dal suo movimento
+    if (player.body.touching.down) {
+        platforms.children.iterate(child => {
+            if (child && child.getData('type') === 'moving' &&
+                Math.abs(player.x - child.x) < 46 &&
+                Math.abs(player.y - (child.y - 12)) < 22) {
+                player.x += child.getData('dx') || 0;
+            }
+        });
+    }
+
     // MAGNET: le monete vicine vengono attirate verso il player
     let magR = [0, 70, 110, 150][upLevels.magnet];
     if (magR > 0) {
@@ -893,23 +924,64 @@ function updateScoreText() {
 }
 
 function jumpOnPlatform(player, platform) {
-    if (player.body.touching.down) {
-        // Salto variabile: caricato con SU/SPAZIO (tastiera) o doppio-tap (touch)
+    if (!player.body.touching.down) return;
+    let type = platform.getData('type') || 'normal';
+
+    // TRABALLANTE: non rimbalza, inclina e fa scivolare (puro Getting Over It)
+    if (type === 'wobbly') {
+        let tilt = platform.getData('tilt') + 1;
+        platform.setData('tilt', tilt);
+        let dir = (tilt % 2 === 0) ? 1 : -1;
+        this.tweens.add({ targets: platform, angle: dir * 12, duration: 220, ease: 'Sine.easeOut' });
+        player.body.velocity.x += dir * 70; // spinta di scivolamento
+        beep(220, 0.1, 'sine', 0.05, 130);
+        return;
+    }
+
+    // FRAGILE: conta i salti; al secondo scoppia (dopo che il rimbalzo e' partito)
+    if (type === 'fragile') {
+        let hits = platform.getData('hits') + 1;
+        platform.setData('hits', hits);
+        if (hits >= 2) {
+            this.time.delayedCall(120, () => {
+                if (!platform.active) return;
+                beep(150, 0.25, 'sawtooth', 0.07, 60);
+                this.tweens.add({
+                    targets: platform, alpha: 0, angle: 25, duration: 200,
+                    onComplete: () => platform.destroy()
+                });
+            });
+        } else {
+            // primo colpo: trema come avvertimento
+            this.tweens.add({ targets: platform, x: platform.x + 2, duration: 40, yoyo: true, repeat: 2 });
+            beep(320, 0.08, 'square', 0.04);
+        }
+    }
+
+    // Potenza del salto
+    let power;
+    if (type === 'spring') {
+        power = -950; // molta piu' spinta, indipendente dal salto caricato
+        beep(500, 0.2, 'triangle', 0.08, 1100);
+    } else {
         let bm = 1 + 0.06 * upLevels.bounce;
-        let powerful = cursors.up.isDown || spaceBar.isDown || chargedTouch;
-        player.setVelocityY((powerful ? -680 : -470) * bm);
-        sfxJump(powerful);
+        power = ((cursors.up.isDown || spaceBar.isDown || chargedTouch) ? -680 : -470) * bm;
+        if (type === 'normal') sfxJump(cursors.up.isDown || spaceBar.isDown || chargedTouch);
+    }
+    player.setVelocityY(power);
 
-        // Squash & stretch: la palla si schiaccia al rimbalzo
-        player.squashing = true;
-        player.setScale(1.25, 0.75);
-        this.tweens.add({
-            targets: player,
-            scaleX: 1, scaleY: 1,
-            duration: 140, ease: 'Back.easeOut',
-            onComplete: () => { player.squashing = false; }
-        });
+    // Squash & stretch: la palla si schiaccia al rimbalzo (esagerato sulla molla)
+    let sq = (type === 'spring') ? 1.45 : 1.25;
+    player.squashing = true;
+    player.setScale(sq, 2 - sq);
+    this.tweens.add({
+        targets: player,
+        scaleX: 1, scaleY: 1,
+        duration: 140, ease: 'Back.easeOut',
+        onComplete: () => { player.squashing = false; }
+    });
 
+    if (type !== 'fragile') {
         this.tweens.add({ targets: platform, y: platform.y + 2, duration: 50, yoyo: true });
     }
 }
@@ -918,8 +990,19 @@ function spawnPlatform(scene, yPos) {
     // Centri 45-355: le piattaforme coprono da x=5 a x=395, così sotto i punti
     // di wrap (x=0 e x=400) c'è sempre terreno su cui atterrare
     let x = Phaser.Math.Between(45, 355);
-    let platform = platforms.create(x, yPos, 'platform');
+
+    // Tipo: la varieta' cresce con l'altezza (pool pesato)
+    let climbed = 570 - yPos;
+    let pool = ['normal', 'normal', 'normal', 'normal', 'normal', 'normal'];
+    if (climbed > 500) pool.push('fragile', 'fragile');
+    if (climbed > 900) pool.push('spring');
+    if (climbed > 1200) { pool.push('moving', 'wobbly'); }
+    let type = pool[Math.floor(Math.random() * pool.length)];
+
+    let tex = (type === 'normal') ? 'platform' : 'plat_' + type;
+    let platform = platforms.create(x, yPos, tex);
     platform.refreshBody();
+    platform.setData({ type: type, baseX: x, t: Math.random() * Math.PI * 2, hits: 0, tilt: 0, dx: 0 });
 
     // Re-applica il pipeline in sicurezza se WebGL è attivo
     if (canUseGlow(scene)) {
