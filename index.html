@@ -425,6 +425,7 @@ function endBoss(scene, defeated) {
     boss = null;
     bossBullets = [];
     bossIndex++;
+    if (defeated) saveBossesDefeated(); // Salva i boss sconfitti in localStorage DOPO l'incremento
     bossActive = false;
     songQueue = ['A', 'A', 'B', 'B']; queuePos = 0; sectionStep = 0;
 }
@@ -800,6 +801,19 @@ function saveUpgrades() {
     } catch (e) { /* storage non disponibile */ }
 }
 
+// ---------- PERSISTENZA BOSS SCONFITTI ----------
+function loadBossesDefeated() {
+    try {
+        return parseInt(localStorage.getItem('neonjump_bosses_defeated') || '0', 10) || 0;
+    } catch (e) { return 0; }
+}
+
+function saveBossesDefeated() {
+    try {
+        localStorage.setItem('neonjump_bosses_defeated', String(bossIndex));
+    } catch (e) { /* storage non disponibile */ }
+}
+
 // ---------- SHOP (schermata game over) ----------
 let shopRows = null;
 let shopCreditsText = null;
@@ -956,9 +970,9 @@ function create() {
     runCoins = 0;
     loadPersisted();
     loadUpgrades();
+    bossIndex = loadBossesDefeated(); // Carica i boss sconfitti precedenti
     shieldCharges = upLevels.shield;
     boss = null;
-    bossIndex = 0;
     bossBullets = [];
     bossActive = false;
 
