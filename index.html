@@ -143,6 +143,8 @@ const BOSSES = [
 ];
 let boss = null;        // boss corrente
 let bossIndex = 0;      // prossimo boss da affrontare
+let statsVisible = false; // overlay stats aperto
+let statsObjs = [];       // oggetti grafici degli stats (per nasconderli)
 let bossBullets = [];   // proiettili {x, y, vx, vy}
 let bossActive = false; // usato dal music engine
 let bulletG = null;
@@ -1041,7 +1043,8 @@ function create() {
     cursors = this.input.keyboard.createCursorKeys();
     spaceBar = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
     // Impedisce il comportamento predefinito dei tasti di gioco (scroll pagina con SPAZIO/frecce)
-    this.input.keyboard.addCapture('UP,DOWN,LEFT,RIGHT,SPACE');
+    this.input.keyboard.addCapture('UP,DOWN,LEFT,RIGHT,SPACE,S');
+    this.input.keyboard.on('keydown-S', () => toggleStats(this));
     this.input.keyboard.on('keydown', initAudio);
 
     // Controlli Touch JOYSTICK: il dito trascinato determina la direzione
@@ -1098,10 +1101,22 @@ function create() {
         stroke: '#000000', strokeThickness: 3
     }).setScrollFactor(0);
 
+    // Bottone STATS mobile (angolo in alto a destra)
+    let statsBtn = this.add.text(380, 40, '[STATS]', {
+        fontSize: '11px', fill: '#00f0ff', fontFamily: 'Courier New, monospace', fontStyle: 'bold',
+        backgroundColor: '#020617', padding: { x: 4, y: 2 }
+    }).setOrigin(1, 0).setScrollFactor(0).setInteractive({ useHandCursor: true });
+    statsBtn.on('pointerdown', () => toggleStats(this));
+
     // Hint audio (tasto M per muto/suono)
-    musicHint = this.add.text(255, 578, 'M: AUDIO ON', {
+    musicHint = this.add.text(370, 578, 'M: AUDIO', {
         fontSize: '10px', fill: '#55607a', fontFamily: 'Courier New, monospace'
-    }).setScrollFactor(0);
+    }).setOrigin(1, 0).setScrollFactor(0);
+
+    // Hint stats (tasto S)
+    this.add.text(370, 562, 'S: STATS', {
+        fontSize: '10px', fill: '#55607a', fontFamily: 'Courier New, monospace'
+    }).setOrigin(1, 0).setScrollFactor(0);
     this.add.text(10, 578, 'DOPPIO TAP = SALTO ALTO', {
         fontSize: '10px', fill: '#55607a', fontFamily: 'Courier New, monospace'
     }).setScrollFactor(0);
@@ -1590,6 +1605,162 @@ function triggerGameOver(scene, reason) {
 
     // Shop upgrade: spendi i crediti prima di rigiocare
     showShop(scene);
+}
+
+// ---------- STATS OVERLAY ----------
+function toggleStats(scene) {
+    if (gameOver) return;
+    statsVisible = !statsVisible;
+    if (statsVisible) {
+        scene.physics.pause();
+        drawStats(scene);
+    } else {
+        statsObjs.forEach(o => o.destroy());
+        statsObjs = [];
+        scene.physics.resume();
+    }
+}
+
+function drawStats(scene) {
+    let bg = scene.add.graphics().setScrollFactor(0).setDepth(100);
+    bg.fillStyle(0x020617, 0.95);
+    bg.fillRect(0, 0, 400, 600);
+    statsObjs.push(bg);
+
+    let title = scene.add.text(200, 30, 'STATS', {
+        fontSize: '28px', fill: C_CYAN_CSS, fontFamily: 'Courier New, monospace', fontStyle: 'bold'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
+    statsObjs.push(title);
+
+    let bhText = scene.add.text(200, 80, 'BEST HEIGHT: ' + Math.floor(bestHeight) + 'px', {
+        fontSize: '16px', fill: '#ffffff', fontFamily: 'Courier New, monospace'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
+    statsObjs.push(bhText);
+
+    let bossTitle = scene.add.text(200, 130, 'BOSS SCONFITTI', {
+        fontSize: '18px', fill: C_YELLOW_CSS, fontFamily: 'Courier New, monospace', fontStyle: 'bold'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
+    statsObjs.push(bossTitle);
+
+    let yPos = 170;
+    for (let i = 0; i < bossIndex && i < BOSSES.length; i++) {
+        let b = BOSSES[i];
+        let badge = scene.add.graphics().setScrollFactor(0).setDepth(101);
+        drawMiniBoss(badge, 60, yPos, b.key);
+        statsObjs.push(badge);
+
+        let nameText = scene.add.text(120, yPos - 10, b.key, {
+            fontSize: '14px', fill: '#ffffff', fontFamily: 'Courier New, monospace', fontStyle: 'bold'
+        }).setScrollFactor(0).setDepth(101);
+        statsObjs.push(nameText);
+
+        let hpText = scene.add.text(120, yPos + 8, 'HP: ' + b.hp + '  |  HEIGHT: ' + b.height + 'px', {
+            fontSize: '11px', fill: '#aaaaaa', fontFamily: 'Courier New, monospace'
+        }).setScrollFactor(0).setDepth(101);
+        statsObjs.push(hpText);
+
+        yPos += 55;
+    }
+
+    if (bossIndex === 0) {
+        let noneText = scene.add.text(200, 200, 'NESSUN BOSS SCONFITTO', {
+            fontSize: '14px', fill: '#666666', fontFamily: 'Courier New, monospace'
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
+        statsObjs.push(noneText);
+    }
+
+    let upTitle = scene.add.text(200, yPos + 20, 'UPGRADE', {
+        fontSize: '16px', fill: C_CYAN_CSS, fontFamily: 'Courier New, monospace', fontStyle: 'bold'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
+    statsObjs.push(upTitle);
+
+    let upY = yPos + 50;
+    UPGRADES.forEach(u => {
+        let lvl = upLevels[u.key] || 0;
+        let upText = scene.add.text(200, upY, u.name + ' Lv.' + lvl + '/' + u.max, {
+            fontSize: '13px', fill: lvl > 0 ? C_YELLOW_CSS : '#666666', fontFamily: 'Courier New, monospace'
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
+        statsObjs.push(upText);
+        upY += 22;
+    });
+
+    let closeText = scene.add.text(200, 570, 'PREMI S PER CHIUDERE', {
+        fontSize: '12px', fill: '#888888', fontFamily: 'Courier New, monospace'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
+    statsObjs.push(closeText);
+}
+
+function drawMiniBoss(g, x, y, key) {
+    g.lineStyle(2, 0xffffff, 1);
+    switch (key) {
+        case 'GLITCH':
+            g.fillStyle(0xff0033, 0.4);
+            g.fillRoundedRect(x - 12, y - 12, 24, 24, 3);
+            g.strokeRoundedRect(x - 12, y - 12, 24, 24, 3);
+            break;
+        case 'FIREWALL':
+            g.fillStyle(0xff9d00, 0.4);
+            g.fillRect(x - 14, y - 6, 28, 12);
+            g.strokeRect(x - 14, y - 6, 28, 12);
+            break;
+        case 'MALWARE':
+            g.fillStyle(0x9d00ff, 0.4);
+            g.fillCircle(x, y, 12);
+            g.strokeCircle(x, y, 12);
+            break;
+        case 'TROJAN':
+            g.fillStyle(0xff0033, 0.4);
+            g.fillTriangle(x, y - 12, x + 12, y + 10, x - 12, y + 10);
+            g.strokeTriangle(x, y - 12, x + 12, y + 10, x - 12, y + 10);
+            break;
+        case 'WORM':
+            g.fillStyle(0x00ff9d, 0.4);
+            for (let i = 0; i < 4; i++) {
+                g.fillCircle(x - 9 + i * 6, y, 5);
+                g.strokeCircle(x - 9 + i * 6, y, 5);
+            }
+            break;
+        case 'DDOS':
+            g.fillStyle(0x00b3ff, 0.4);
+            g.fillCircle(x, y, 8);
+            g.strokeCircle(x, y, 8);
+            for (let i = 0; i < 4; i++) {
+                let angle = (i * Math.PI) / 2;
+                g.fillCircle(x + Math.cos(angle) * 12, y + Math.sin(angle) * 12, 3);
+            }
+            break;
+        case 'RANSOMWARE':
+            g.fillStyle(0xffd700, 0.4);
+            g.fillRoundedRect(x - 8, y - 10, 16, 14, 2);
+            g.strokeRoundedRect(x - 8, y - 10, 16, 14, 2);
+            g.lineStyle(2, 0xff0033, 1);
+            g.beginPath();
+            g.arc(x, y - 10, 5, Math.PI, 0);
+            g.strokePath();
+            break;
+        case 'DATALOSS':
+            g.fillStyle(0x000000, 0.8);
+            g.fillCircle(x, y, 14);
+            g.lineStyle(2, 0x00f0ff, 1);
+            g.strokeCircle(x, y, 14);
+            break;
+        case 'ROOTKIT':
+            g.fillStyle(0xaaaaaa, 0.3);
+            g.fillCircle(x, y, 12);
+            g.strokeCircle(x, y, 12);
+            break;
+        case 'AI':
+            g.fillStyle(0xff00ff, 0.4);
+            g.fillTriangle(x, y - 12, x + 12, y + 8, x - 12, y + 8);
+            g.strokeTriangle(x, y - 12, x + 12, y + 8, x - 12, y + 8);
+            g.lineStyle(1, 0x00ffff, 1);
+            g.strokeCircle(x, y, 14);
+            break;
+        default:
+            g.fillStyle(0x666666, 0.4);
+            g.fillCircle(x, y, 10);
+            g.strokeCircle(x, y, 10);
+    }
 }
 </script>
 </body>
