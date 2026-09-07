@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Endless Climber</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; background-color: #020617; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+        #game-container { border: 2px solid #a855f7; border-radius: 12px; overflow: hidden; }
+    </style>
+</head>
+<body>
+<div id="game-container"></div>
+<script>
+
+// Definiamo la classe del Pipeline *prima* della configurazione
+class GlowPostFX extends Phaser.Renderer.WebGL.Pipelines.PostFXPipeline {
+    constructor(game) {
+        super({
+            game,
+            name: 'GlowPostFX',
+            fragShader: `
+            precision mediump float;
+            uniform sampler2D uMainSampler;
+            varying vec2 outTexCoord;
+            uniform vec2 uTextureSize;
+            uniform float uDistance;
+            uniform float uOuterStrength;
+            uniform vec4 uGlowColor;
+
+            void main() {
+                vec4 texel = texture2D(uMainSampler, outTexCoord);
+                vec3 glow = vec3(0.0);
+                float step = 1.0 / max(uTextureSize.x, uTextureSize.y);
+                float count = 0.0;
+
+                for (float y = -2.0; y <= 2.0; y++) {
+                    for (float x = -2.0; x <= 2.0; x++) {
+                        vec2 dist = vec2(x, y) * uDistance * step;
+                        vec4 c = texture2D(uMainSampler, outTexCoord + dist);
+                        float a = c.a * max(0.0, 1.0 - length(vec2(x, y)) / 3.0);
+                        glow += uGlowColor.rgb * a;
+                        count += a;
+                    }
+                }
+                if (count > 0.0) {
+                    glow /= count;
+                }
+                
+                vec4 finalColor = vec4(mix(texel.rgb, glow, uOuterStrength * (1.0 - texel.a)), max(texel.a, glow.x * uOuterStrength));
+                gl_FragColor = finalColor;
+            }
+            `
+        });
+        this.distance = 4.0;
+        this.outerStrength = 2.0;
+        this.glowColor = new Phaser.Display.Color(255, 255, 255);
+    }
+}
+
+// Configurazione corretta per Phaser v3.60+
+const config = {
+    type: Phaser.AUTO,
+    width: 400,
+    height: 600,
+    parent: 'game-container',
+    backgroundColor: '#020617',
+    physics: {
+        default: 'arcade',
+        arcade: { gravity: { y: 1000 }, debug: false }
+    },
+    // REGISTRAZIONE PIPELINE CORRETTA
+    pipeline: { 'GlowFX': GlowPostFX },
+    scene: { preload: preload, create: create, update: update }
+};
+
+const game = new Phaser.Game(config);
+
+let player;
+let platforms;
+let coins;
+let enemies;
+let trailEmitter;
+let deathEmitter;
+let cursors;
+let score = 0;
+let scoreText;
+let bestY = 0;          // Altezza massima raggiunta (per il punteggio)
+let nextSpawnY = 0;     // Prossima Y dove generare piattaforme (mondo fisso)
+const SPAWN_GAP = 95;   // Distanza verticale tra piattaforme
+const CULL_MARGIN = 1200; // Distanza sotto la camera oltre cui fare culling
+let gameOver = false;
+let touchX = null;
+let bgGradient;
+
+// Feel upgrades
+let audioCtx = null;      // WebAudio (creato al primo input)
+let isHolding = false;    // touch/pointer premuto (salto caricato)
+let spaceBar = null;
+let lastZone = 0;         // ultima milestone raggiunta
+let curZoneIdx = 0;       // palette corrente
+let bestHeight = 0;       // massima altezza storica (px saliti, persistente)
+let ghostLine = null, ghostText = null;
+
+// Palette per zona
+const ZONES = [
+    { top: 0x020617, bottom: 0x0f172a },  // 0: blu notte (base)
+    { top: 0x0d0518, bottom: 0x2a0a3a },  // 1: viola profondo
+    { top: 0x001a14, bottom: 0x053b2e },  // 2: verde cyber
+    { top: 0x1a0d00, bottom: 0x3d2200 },  // 3: arancio bruciato
+    { top: 0x160016, bottom: 0x3a0030 }   // 4: magenta
+];
+const ZONE_SIZE = 1500; // px di salita per zona
+
+// Colori Neon
+const C_CYAN = 0x00f0ff;
+const C_PURPLE = 0xa855f7;
+const C_YELLOW = 0xfff700;
+const C_RED = 0xff0033;
+
+// Funzione utilitaria per controllare in sicurezza il pipeline
+function canUseGlow(scene) {
+    // Controllo WebGL *e* specifica disponibilità del pipeline registrato
+    return scene.renderer.type === Phaser.WEBGL && 
+           scene.renderer.pipelines && 
+           scene.renderer.pipelines.has('GlowFX');
+}
+
+// ---------- AUDIO PROCEDURALE (WebAudio, nessun asset) ----------
+function initAudio() {
+    if (!audioCtx) {
+        try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audioCtx = null; }
+    }
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function beep(freq, dur, type, vol, slideTo) {
+    if (!audioCtx) return;
+    let o = audioCtx.createOscillator();
+    let g = audioCtx.createGain();
+    o.type = type || 'square';
+    o.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, audioCtx.currentTime + dur);
+    g.gain.setValueAtTime(vol || 0.06, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + dur);
+}
+
+function sfxJump(powerful) { beep(powerful ? 300 : 240, 0.12, 'square', 0.05, powerful ? 640 : 480); }
+function sfxCoin()          { beep(880, 0.09, 'square', 0.05, 1320); }
+function sfxDeath()         { beep(220, 0.45, 'sawtooth', 0.09, 55); }
+function sfxMilestone()     {
+    beep(523, 0.1, 'triangle', 0.07);
+    setTimeout(() => beep(659, 0.1, 'triangle', 0.07), 110);
+    setTimeout(() => beep(784, 0.2, 'triangle', 0.07), 220);
+}
+
+// ---------- GHOST DELLA BEST HEIGHT ----------
+function drawGhostLine(scene) {
+    if (!ghostLine) return;
+    ghostLine.clear();
+    if (bestHeight <= 100) {
+        if (ghostText) { ghostText.destroy(); ghostText = null; }
+        return;
+    }
+    let y = 570 - bestHeight;
+    ghostLine.lineStyle(2, 0xffffff, 0.35);
+    for (let x = 0; x < 400; x += 20) {
+        ghostLine.lineBetween(x, y, x + 10, y);
+    }
+    if (!ghostText) {
+        ghostText = scene.add.text(330, y - 22, 'BEST', {
+            fontSize: '12px', fill: '#ffffff', fontFamily: 'Courier New, monospace'
+        }).setAlpha(0.5);
+    } else {
+        ghostText.y = y - 22;
+    }
+}
+
+function loadPersisted() {
+    try {
+        bestHeight = parseInt(localStorage.getItem('neonjump_bestheight') || '0', 10) || 0;
+    } catch (e) { bestHeight = 0; }
+}
+
+function savePersisted() {
+    try {
+        localStorage.setItem('neonjump_bestheight', String(bestHeight));
+    } catch (e) { /* storage non disponibile */ }
+}
+
+// ---------- MILESTONE / ZONE ----------
+function showMilestone(scene, zone) {
+    curZoneIdx = zone % ZONES.length;
+    drawBgGradient(scene);
+
+    scene.cameras.main.flash(250,
+        (curZoneIdx === 1) ? 168 : 0,
+        (curZoneIdx === 2) ? 80 : 60,
+        (curZoneIdx === 3) ? 0 : (curZoneIdx === 4 ? 60 : 120));
+
+    let banner = scene.add.text(200, 260, 'ZONA ' + zone, {
+        fontSize: '26px', fill: C_CYAN, fontFamily: 'Courier New, monospace', fontStyle: 'bold'
+    }).setOrigin(0.5).setScrollFactor(0).setAlpha(0);
+
+    if (canUseGlow(scene)) banner.setPostPipeline('GlowFX');
+
+    scene.tweens.add({
+        targets: banner,
+        alpha: 1, y: 240, duration: 300, yoyo: true, hold: 900,
+        ease: 'Sine.easeInOut',
+        onComplete: () => banner.destroy()
+    });
+    sfxMilestone();
+}
+
+function preload() {
+    let g = this.add.graphics();
+
+    // 1. Texture Giocatore
+    g.lineStyle(2, 0xffffff, 1);
+    g.fillStyle(C_CYAN, 0.8);
+    g.fillCircle(16, 16, 14);
+    g.strokeCircle(16, 16, 14);
+    g.generateTexture('player', 32, 32);
+    g.clear();
+
+    // 2. Texture Piattaforma
+    g.lineStyle(3, 0xffffff, 1);
+    g.fillStyle(C_PURPLE, 0.3);
+    g.fillRoundedRect(0, 0, 80, 16, 4);
+    g.strokeRoundedRect(0, 0, 80, 16, 4);
+    g.generateTexture('platform', 80, 16);
+    g.clear();
+
+    // 3. Texture Moneta
+    g.lineStyle(2, 0xffffff, 1);
+    g.fillStyle(C_YELLOW, 1);
+    g.fillCircle(8, 8, 5);
+    g.strokeCircle(8, 8, 7);
+    g.generateTexture('coin', 16, 16);
+    g.clear();
+
+    // 4. Texture Nemico
+    g.lineStyle(2, 0xffffff, 1);
+    g.fillStyle(C_RED, 0.9);
+    g.beginPath(); g.moveTo(12, 0); g.lineTo(24, 24); g.lineTo(0, 24); g.closePath();
+    g.fill(); g.stroke();
+    g.generateTexture('enemy', 24, 24);
+    g.clear();
+    
+    // 5. Texture Particella Scia
+    g.fillStyle(0xffffff, 1);
+    g.fillRect(0,0,4,4);
+    g.generateTexture('particle', 4, 4);
+    g.destroy();
+}
+
+function create() {
+    score = 0;
+    bestY = 0;
+    gameOver = false;
+    touchX = null; // Resetta input touch
+    lastZone = 0;
+    curZoneIdx = 0;
+    isHolding = false;
+    loadPersisted();
+
+    // Sfondo Gradiente (segue la camera in scorrimento verticale)
+    bgGradient = this.add.graphics().setScrollFactor(0);
+    drawBgGradient(this);
+
+    // Gruppi di Fisica
+    platforms = this.physics.add.staticGroup();
+    coins = this.physics.add.group();
+    enemies = this.physics.add.group();
+
+    // Verifichiamo la sicurezza del pipeline prima di applicarlo
+    if (canUseGlow(this)) {
+        platforms.setPostPipeline('GlowFX');
+        coins.setPostPipeline('GlowFX');
+        enemies.setPostPipeline('GlowFX');
+    }
+
+    // Base iniziale (coordinate mondo fisse: si sale verso Y negativi)
+    platforms.create(200, 570, 'platform').setScale(5, 1).refreshBody();
+
+    // Generazione piattaforme iniziali
+    for (let i = 1; i < 7; i++) {
+        spawnPlatform(this, 570 - (i * SPAWN_GAP));
+    }
+    nextSpawnY = 570 - (7 * SPAWN_GAP);
+
+    // Giocatore
+    player = this.physics.add.sprite(200, 450, 'player');
+    player.setBounce(0.1);
+    player.setCircle(14, 2, 2);
+    bestY = player.y;
+
+    // Camera vera: segue il giocatore in entrambe le direzioni.
+    // Il livello resta fisso: se cadi, vedi di nuovo tutto ciò che avevi superato.
+    // Bounds: infinito verso l'alto, base del mondo a y=600
+    this.cameras.main.setBounds(0, -1000000, 400, 1000600);
+    this.cameras.main.startFollow(player, true, 0.1, 0.1);
+
+    // Effetto Particelle Scia (Più efficiente per mobile)
+    trailEmitter = this.add.particles(0, 0, 'particle', {
+        speed: { min: 10, max: 50 },
+        scale: { start: 1, end: 0 },
+        alpha: { start: 0.5, end: 0 },
+        lifespan: 500,
+        blendMode: 'ADD',
+        tint: C_CYAN,
+        emitting: false
+    });
+    trailEmitter.startFollow(player);
+
+    // Effetto Particelle Morte
+    deathEmitter = this.add.particles(0, 0, 'particle', {
+        speed: { min: 100, max: 300 },
+        scale: { start: 2, end: 0 },
+        lifespan: 800,
+        blendMode: 'ADD',
+        tint: C_RED,
+        emitting: false
+    });
+
+    // Applica Glow al giocatore in sicurezza
+    if (canUseGlow(this)) {
+        player.setPostPipeline('GlowFX');
+    }
+
+    // Collisioni
+    this.physics.add.collider(player, platforms, jumpOnPlatform, null, this);
+    this.physics.add.overlap(player, coins, collectCoin, null, this);
+    this.physics.add.overlap(player, enemies, hitEnemy, null, this);
+
+    // Controlli Tastiera
+    cursors = this.input.keyboard.createCursorKeys();
+    spaceBar = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    this.input.keyboard.on('keydown', initAudio);
+
+    // Controlli Touch (Gestione eventi migliorata)
+    this.input.on('pointerdown', (pointer) => { initAudio(); touchX = pointer.x; isHolding = true; });
+    this.input.on('pointermove', (pointer) => { if (pointer.isDown) touchX = pointer.x; });
+    this.input.on('pointerup', () => { touchX = null; isHolding = false; });
+
+    // Ghost della best height storica
+    ghostLine = this.add.graphics().setDepth(1);
+    drawGhostLine(this);
+
+    // UI Punteggio
+    scoreText = this.add.text(20, 20, 'SCORE: 000000', { 
+        fontSize: '18px', 
+        fill: '#ffffff', 
+        fontFamily: 'Courier New, monospace', 
+        fontStyle: 'bold' 
+    }).setScrollFactor(0);
+    if (canUseGlow(this)) {
+        scoreText.setPostPipeline('GlowFX');
+    }
+}
+
+function update() {
+    if (gameOver) return;
+
+    // Movimento
+    let isMoving = false;
+    if (cursors.left.isDown || (touchX !== null && touchX < player.x - 20)) {
+        player.setVelocityX(-250);
+        isMoving = true;
+    } else if (cursors.right.isDown || (touchX !== null && touchX > player.x + 20)) {
+        player.setVelocityX(250);
+        isMoving = true;
+    } else {
+        player.setVelocityX(0);
+    }
+
+    // Gestione emissione scia
+    if (isMoving || Math.abs(player.body.velocity.y) > 100) {
+        trailEmitter.emitting = true;
+    } else {
+        trailEmitter.emitting = false;
+    }
+
+    // Stretch in volo (si allunga con la velocità), se non sta già facendo lo squash
+    if (!player.squashing) {
+        let s = Phaser.Math.Clamp(1 + Math.abs(player.body.velocity.y) / 3500, 1, 1.12);
+        player.setScale(1 - (s - 1) * 0.6, s);
+    }
+
+    // Wrap solo orizzontale (il wrap di Phaser wrapperrebbe anche verticalmente)
+    if (player.x < -16) player.x = 416;
+    else if (player.x > 416) player.x = -16;
+
+    // --- Mondo fisso + camera: niente più scorrimento "artificiale" ---
+    let camTop = this.cameras.main.scrollY;   // bordo superiore visibile
+
+    // Spawn procedurale: genera piattaforme sopra la camera mentre si sale.
+    // Le piattaforme esistenti NON vengono mai mosse o distrutte: il livello persiste.
+    while (nextSpawnY > camTop - 150) {
+        spawnPlatform(this, nextSpawnY);
+        nextSpawnY -= SPAWN_GAP;
+    }
+
+    // Culling: rimuove solo ciò che è rimasto molto indietro SOTTO la camera
+    let cullLine = camTop + 600 + CULL_MARGIN;
+    platforms.children.iterate(child => {
+        if (child && child.y > cullLine) child.destroy();
+    });
+    coins.children.iterate(child => {
+        if (child && child.y > cullLine) child.destroy();
+    });
+    enemies.children.iterate(child => {
+        if (child && child.y > cullLine) child.destroy();
+    });
+
+    // Rimbalzo nemici sui bordi (niente world bounds, mondo infinito in verticale)
+    enemies.children.iterate(child => {
+        if (child) {
+            if (child.x < 25 || child.x > 375) child.body.velocity.x *= -1;
+        }
+    });
+
+    // Safety: se cadi oltre la zona di culling (più piattaforme presenti) → game over
+    if (player.y > cullLine) {
+        triggerGameOver(this, 'CADUTO NELL\'ABISSO');
+    }
+
+    // Punteggio basato sull'altezza massima raggiunta (persistente: se cadi non lo perdi)
+    if (player.y < bestY) {
+        bestY = player.y;
+        let newScore = Math.floor((570 - bestY) / 2);
+        if (newScore > score) {
+            score = newScore;
+            updateScoreText();
+        }
+    }
+
+    // Milestone di zona ogni ZONE_SIZE px saliti
+    let zone = Math.floor(Math.max(0, 570 - player.y) / ZONE_SIZE);
+    if (zone > lastZone) {
+        lastZone = zone;
+        showMilestone(this, zone);
+    }
+
+    // Best height storica: aggiorna ghost line in diretta e persiste al game over
+    let climbed = 570 - player.y;
+    if (climbed > bestHeight) {
+        bestHeight = climbed;
+        drawGhostLine(this);
+    }
+}
+
+function drawBgGradient(scene) {
+    let zone = ZONES[curZoneIdx] || ZONES[0];
+    bgGradient.clear();
+    bgGradient.fillGradientStyle(zone.top, zone.top, zone.bottom, zone.bottom, 1);
+    bgGradient.fillRect(0, 0, 400, 600);
+}
+
+function updateScoreText() {
+    let s = "000000" + score;
+    scoreText.setText('SCORE: ' + s.slice(-6));
+}
+
+function jumpOnPlatform(player, platform) {
+    if (player.body.touching.down) {
+        // Salto variabile: tieni premuto (touch / SU / SPAZIO) per saltare più in alto
+        let powerful = isHolding || cursors.up.isDown || spaceBar.isDown;
+        player.setVelocityY(powerful ? -680 : -470);
+        sfxJump(powerful);
+
+        // Squash & stretch: la palla si schiaccia al rimbalzo
+        player.squashing = true;
+        player.setScale(1.25, 0.75);
+        this.tweens.add({
+            targets: player,
+            scaleX: 1, scaleY: 1,
+            duration: 140, ease: 'Back.easeOut',
+            onComplete: () => { player.squashing = false; }
+        });
+
+        this.tweens.add({ targets: platform, y: platform.y + 2, duration: 50, yoyo: true });
+    }
+}
+
+function spawnPlatform(scene, yPos) {
+    let x = Phaser.Math.Between(60, 340);
+    let platform = platforms.create(x, yPos, 'platform');
+    platform.refreshBody();
+
+    // Re-applica il pipeline in sicurezza se WebGL è attivo
+    if (canUseGlow(scene)) {
+        platform.setPostPipeline('GlowFX');
+    }
+
+    if (Math.random() < 0.35) {
+        let coin = coins.create(x, yPos - 35, 'coin');
+        coin.body.setAllowGravity(false);
+        scene.tweens.add({
+            targets: coin,
+            y: coin.y - 5,
+            duration: 1000,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut'
+        });
+    }
+
+    if (score > 1000 && yPos < -1400 && Math.random() < 0.25) {
+        let enemy = enemies.create(x, yPos - 35, 'enemy');
+        enemy.body.setAllowGravity(false);
+        enemy.setVelocityX(Phaser.Math.Between(60, 120) * (Math.random() < 0.5 ? 1 : -1));
+        enemy.setBounce(1);
+    }
+}
+
+function collectCoin(player, coin) {
+    coin.destroy();
+    score += 500;
+    updateScoreText();
+    sfxCoin();
+    this.tweens.add({ targets: scoreText, scale: 1.1, duration: 100, yoyo: true });
+}
+
+function hitEnemy(player, enemy) {
+    triggerGameOver(this, 'HACKERATO!');
+}
+
+function triggerGameOver(scene, reason) {
+    gameOver = true;
+    scene.physics.pause();
+    savePersisted();
+    sfxDeath();
+    
+    trailEmitter.stop();
+    player.setVisible(false);
+
+    deathEmitter.emitParticleAt(player.x, player.y, 20);
+
+    let overlay = scene.add.graphics().setScrollFactor(0);
+    overlay.fillStyle(0x000000, 0.7);
+    overlay.fillRect(0, 0, 400, 600);
+
+    let goText = scene.add.text(200, 240, 'SISTEMA COMPROMESSO', { 
+        fontSize: '28px', fill: C_RED, fontFamily: 'Courier New, monospace', fontStyle: 'bold' 
+    }).setOrigin(0.5).setScrollFactor(0);
+    
+    let reasonText = scene.add.text(200, 280, reason, { 
+        fontSize: '16px', fill: '#ffffff', fontFamily: 'Courier New, monospace' 
+    }).setOrigin(0.5).setScrollFactor(0);
+
+    let finalScoreText = scene.add.text(200, 320, 'Punteggio Finale: ' + score, { 
+        fontSize: '20px', fill: C_CYAN, fontFamily: 'Courier New, monospace' 
+    }).setOrigin(0.5).setScrollFactor(0);
+
+    scene.add.text(200, 380, 'Tocca per Riavviare', { 
+        fontSize: '16px', fill: '#aaaaaa', fontFamily: 'Courier New, monospace' 
+    }).setOrigin(0.5).setScrollFactor(0);
+
+    if (canUseGlow(scene)) {
+        goText.setPostPipeline('GlowFX');
+        finalScoreText.setPostPipeline('GlowFX');
+    }
+
+    // Assicurati che l'input venga recepito correttamente per il riavvio
+    scene.input.once('pointerdown', () => {
+        scene.scene.restart();
+    });
+}
+</script>
+</body>
+</html>
