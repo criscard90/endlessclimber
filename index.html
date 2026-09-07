@@ -911,9 +911,9 @@ function preload() {
     function makePlatformTex(key, color) {
         g.lineStyle(3, 0xffffff, 1);
         g.fillStyle(color, 0.35);
-        g.fillRoundedRect(0, 0, 80, 16, 4);
-        g.strokeRoundedRect(0, 0, 80, 16, 4);
-        g.generateTexture(key, 80, 16);
+        g.fillRoundedRect(0, 0, 80, 24, 4);
+        g.strokeRoundedRect(0, 0, 80, 24, 4);
+        g.generateTexture(key, 80, 24);
         g.clear();
     }
     makePlatformTex('platform', C_PURPLE);      // normale
@@ -993,7 +993,6 @@ function create() {
     player = this.physics.add.sprite(200, startY, 'player');
     player.setBounce(0.1);
     player.setCircle(14, 2, 2);
-    player.body.setMaxVelocityY(500);  // anti-tunneling: limite caduta (piattaforme sono 16px)
     bestY = player.y;
 
     // Camera vera: segue il giocatore in entrambe le direzioni.
