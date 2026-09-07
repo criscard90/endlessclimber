@@ -106,11 +106,11 @@ let musicHint = null;
 
 // ---------- SISTEMA UPGRADE ----------
 const UPGRADES = [
-    { key: 'control', name: 'CONTROL',     desc: 'La sfera aderisce ai comandi: +12% velocita\' e +30% accelerazione laterale', max: 3, costs: [100, 250, 500] },
+    { key: 'control', name: 'CONTROL',     desc: 'Direzione piu\' reattiva: +12% velocita\' laterale', max: 3, costs: [100, 250, 500] },
     { key: 'bounce',  name: 'BOUNCE',      desc: 'Salto piu\' potente: +6% di spinta per livello',                              max: 3, costs: [100, 250, 500] },
-    { key: 'magnet',  name: 'MAGNET',      desc: 'Genera un campo che attira le monete vicine',                                 max: 3, costs: [150, 350, 600] },
-    { key: 'shield',  name: 'SHIELD',      desc: 'Scudo energetico: assorbe 1 colpo nemico per run',                            max: 2, costs: [300, 700] },
-    { key: 'boost',   name: 'START BOOST', desc: 'Inizi la salita 150px piu\' in alto per livello',                             max: 3, costs: [120, 300, 600] }
+    { key: 'magnet',  name: 'MAGNET',      desc: 'Attira le monete vicine (raggio crescente)', max: 3, costs: [150, 350, 600] },
+    { key: 'shield',  name: 'SHIELD',      desc: 'Assorbe 1 colpo nemico per run', max: 2, costs: [300, 700] },
+    { key: 'boost',   name: 'START BOOST', desc: 'Inizi 150px piu\' in alto per livello',                             max: 3, costs: [120, 300, 600] }
 ];
 let credits = 0;      // crediti accumulati (persistenti)
 let runCoins = 0;     // monete raccolte nella run corrente
@@ -952,7 +952,7 @@ function collectCoin(player, coin) {
     score += 500;
     runCoins++;
     updateScoreText();
-    creditsHud.setText('CR: ' + (credits + runCoins));
+    creditsHud.setText('CREDITS: ' + (credits + runCoins));
     sfxCoin();
     this.tweens.add({ targets: scoreText, scale: 1.1, duration: 100, yoyo: true });
 }
