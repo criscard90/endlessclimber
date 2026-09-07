@@ -94,6 +94,7 @@ let gameOver = false;
 let touchX = null;
 let joyStartX = null;  // posizione iniziale del tocco per il joystick
 let joyDir = 0;        // direzione joystick: -1 sinistra, 0 fermo, +1 destra
+let chargedTouchTime = 0; // timestamp dell'ultimo doppio-tap (scade dopo 400ms)
 let bgGradient;
 
 // Feel upgrades
@@ -1050,6 +1051,7 @@ function create() {
         initAudio();
         let now = this.time.now;
         chargedTouch = (now - lastTapT) < 300;
+        if (chargedTouch) chargedTouchTime = now;
         lastTapT = now;
         joyStartX = pointer.x;
         joyDir = 0;
@@ -1067,7 +1069,8 @@ function create() {
             touchX = pointer.x;
         }
     });
-    this.input.on('pointerup', () => { touchX = null; joyStartX = null; joyDir = 0; isHolding = false; chargedTouch = false; });
+    this.input.on('pointerup', () => { touchX = null; joyStartX = null; joyDir = 0; isHolding = false; });
+    // NOTA: chargedTouch NON viene resettato qui — scade da solo dopo 400ms (vedi sotto)
 
     // Anello di carica touch (feedback del salto caricato)
     chargeRing = this.add.graphics().setDepth(2);
@@ -1396,6 +1399,8 @@ function updateScoreText() {
 
 function jumpOnPlatform(player, platform) {
     if (!player.body.touching.down) return;
+    // Il salto caricato scade dopo 400ms dal doppio-tap (non viene resettato al pointerup)
+    if (chargedTouch && (this.time.now - chargedTouchTime) > 400) chargedTouch = false;
     let type = platform.getData('type') || 'normal';
 
     // TRABALLANTE: non rimbalza, inclina e fa scivolare (puro Getting Over It)
