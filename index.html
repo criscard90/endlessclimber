@@ -122,7 +122,7 @@ let shieldCharges = 0;
 // ---------- CHECKPOINTS ----------
 const CHECKPOINT_INTERVAL = 1000;  // px saliti tra un checkpoint e l'altro
 let highestCheckpointY = 0;        // Y del checkpoint più alto raggiunto (persistito)
-let checkpointPlatforms = [];      // riferimenti ai checkpoint attivi
+let checkpointPlatforms = null;   // physics group dei checkpoint
 let respawnCheckpointY = null;    // checkpoint corrente per respawn
 let shieldRing = null;
 let creditsHud = null;
@@ -1011,7 +1011,7 @@ function create() {
     bossActive = false;
 
     // Reset checkpoints
-    checkpointPlatforms = [];
+    checkpointPlatforms = this.physics.add.group();
     respawnCheckpointY = null;
 
     // Sfondo Gradiente (segue la camera in scorrimento verticale)
@@ -1314,9 +1314,8 @@ function update(time, delta) {
     });
 
     // Culling checkpoint lontani
-    checkpointPlatforms = checkpointPlatforms.filter(cp => {
-        if (cp.y > cullLine) { cp.destroy(); return false; }
-        return true;
+    checkpointPlatforms.children.iterate(cp => {
+        if (cp && cp.y > cullLine) cp.destroy();
     });
 
     // Rimbalzo nemici sui bordi (niente world bounds, mondo infinito in verticale).
@@ -1572,7 +1571,7 @@ function spawnPlatform(scene, yPos) {
         cp.body.setImmovable(true);
         cp.setData('yPos', yPos);
         cp.setData('activated', false);
-        checkpointPlatforms.push(cp);
+        checkpointPlatforms.add(cp);
         platform.setData('checkpoint', true);
         // Effetto glow pulsante
         scene.tweens.add({
