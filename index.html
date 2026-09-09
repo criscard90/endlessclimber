@@ -1039,26 +1039,20 @@ function create() {
     }
     nextSpawnY = 570 - (7 * SPAWN_GAP);
 
-    // Giocatore
-    // START BOOST: si parte piu' in alto in base al livello acquistato
-    // CHECKPOINT: se c'è un checkpoint salvato, parti da lì
-    let startY = 450 - 150 * upLevels.boost;
-    let startX = 200;
-
+    // CHECKPOINT: se c'è un checkpoint salvato, crea una piattaforma lì (per il respawn)
     if (highestCheckpointY > 0) {
-        // Calcola la Y del checkpoint dall'altezza salvata
         let checkpointY = 570 - highestCheckpointY;
-        // Crea una piattaforma checkpoint alla posizione salvata
         let cpPlat = platforms.create(200, checkpointY, 'platform');
         cpPlat.refreshBody();
         cpPlat.setData('type', 'normal');
         cpPlat.setData('checkpoint', true);
         respawnCheckpointPlatform = cpPlat;
-        startY = checkpointY - 30;
-        startX = 200;
     }
 
-    player = this.physics.add.sprite(startX, startY, 'player');
+    // Giocatore
+    // START BOOST: si parte piu' in alto in base al livello acquistato
+    let startY = 450 - 150 * upLevels.boost;
+    player = this.physics.add.sprite(200, startY, 'player');
     player.setBounce(0.1);
     player.setCircle(14, 2, 2);
     player.body.setMaxVelocityY(800); // Limita velocità caduta per evitare tunneling (salto -850 passa)
@@ -1069,7 +1063,7 @@ function create() {
     // Bounds: infinito verso l'alto, base del mondo a y=600
     this.cameras.main.setBounds(0, -1000000, 400, 1000600);
     this.cameras.main.startFollow(player, true, 0.1, 0.1);
-    this.cameras.main.centerOn(startX, startY);
+    this.cameras.main.centerOn(200, player.y);
 
     // Anello visivo dello scudo (segue il player)
     shieldRing = this.add.graphics().setDepth(2);
