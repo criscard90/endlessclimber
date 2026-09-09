@@ -123,7 +123,7 @@ let shieldCharges = 0;
 const CHECKPOINT_INTERVAL = 1000;  // px saliti tra un checkpoint e l'altro
 let highestCheckpointY = 0;        // Y del checkpoint più alto raggiunto (persistito)
 let checkpointPlatforms = null;   // physics group dei checkpoint
-let respawnCheckpointY = null;    // checkpoint corrente per respawn
+let respawnCheckpointPlatform = null;  // piattaforma checkpoint per respawn
 let shieldRing = null;
 let creditsHud = null;
 let lastTapT = 0;           // timestamp dell'ultimo tap (per salto caricato)
@@ -1012,7 +1012,7 @@ function create() {
 
     // Reset checkpoints
     checkpointPlatforms = this.physics.add.group();
-    respawnCheckpointY = null;
+    respawnCheckpointPlatform = null;
 
     // Sfondo Gradiente (segue la camera in scorrimento verticale)
     bgGradient = this.add.graphics().setScrollFactor(0);
@@ -1412,7 +1412,7 @@ function update(time, delta) {
 
     // Safety: se cadi oltre la zona di culling → respawn a checkpoint o game over
     if (player.y > cullLine) {
-        if (respawnCheckpointY !== null && respawnCheckpointY < player.y) {
+        if (respawnCheckpointPlatform !== null && respawnCheckpointPlatform.y < player.y) {
             // Respawn all'ultimo checkpoint
             respawnAtCheckpoint(this);
         } else {
@@ -1569,8 +1569,10 @@ function spawnPlatform(scene, yPos) {
         let cp = scene.physics.add.image(x, yPos - 28, 'checkpoint').setDepth(5);
         cp.body.setAllowGravity(false);
         cp.body.setImmovable(true);
+        cp.body.setVelocity(0, 0);
         cp.setData('yPos', yPos);
         cp.setData('activated', false);
+        cp.setData('platform', platform);
         checkpointPlatforms.add(cp);
         platform.setData('checkpoint', true);
         // Effetto glow pulsante
@@ -1621,7 +1623,8 @@ function activateCheckpoint(player, checkpoint) {
     checkpoint.setData('activated', true);
 
     let cpY = checkpoint.getData('yPos');
-    respawnCheckpointY = cpY;
+    let cpPlatform = checkpoint.getData('platform');
+    respawnCheckpointPlatform = cpPlatform;
 
     // Aggiorna il checkpoint più alto raggiunto
     let climbed = 570 - cpY;
@@ -1663,21 +1666,40 @@ function respawnAtCheckpoint(scene) {
     runCoins -= penalty;
     if (runCoins < 0) runCoins = 0;
 
-    // Teletrasporto al checkpoint
-    player.setPosition(200, respawnCheckpointY - 30);
+    // Trova la posizione del checkpoint
+    let cpX = 200;
+    let cpY = 450;
+
+    if (respawnCheckpointPlatform && respawnCheckpointPlatform.active) {
+        cpX = respawnCheckpointPlatform.x;
+        cpY = respawnCheckpointPlatform.y;
+    }
+
+    // Assicurati che ci sia una piattaforma sotto il giocatore
+    // Se la piattaforma checkpoint non esiste più, creane una nuova
+    if (!respawnCheckpointPlatform || !respawnCheckpointPlatform.active) {
+        let newPlat = platforms.create(cpX, cpY, 'platform');
+        newPlat.refreshBody();
+        newPlat.setData('type', 'normal');
+        newPlat.setData('checkpoint', true);
+        respawnCheckpointPlatform = newPlat;
+    }
+
+    // Teletrasporto al checkpoint (sopra la piattaforma)
+    player.setPosition(cpX, cpY - 30);
     player.setVelocity(0, 0);
-    bestY = respawnCheckpointY - 30;
+    bestY = cpY - 30;
 
     // Aggiorna HUD
     creditsHud.setText('CREDITS: ' + (credits + runCoins));
 
     // Feedback visivo
     scene.cameras.main.flash(300, 255, 100, 0);
-    scene.cameras.main.centerOn(200, respawnCheckpointY - 30);
+    scene.cameras.main.centerOn(cpX, cpY - 30);
     beep(330, 0.2, 'sawtooth', 0.06, 110);
 
     // Testo "RESPAWN!"
-    let txt = scene.add.text(200, respawnCheckpointY - 60, 'RESPAWN!' + (penalty > 0 ? ' (-' + penalty + ' CR)' : ''), {
+    let txt = scene.add.text(cpX, cpY - 60, 'RESPAWN!' + (penalty > 0 ? ' (-' + penalty + ' CR)' : ''), {
         fontSize: '16px', fill: '#ff9d00', fontFamily: 'Courier New, monospace', fontStyle: 'bold',
         stroke: '#000000', strokeThickness: 2
     }).setOrigin(0.5).setDepth(100);
