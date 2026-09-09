@@ -118,6 +118,12 @@ let credits = 0;      // crediti accumulati (persistenti)
 let runCoins = 0;     // monete raccolte nella run corrente
 let upLevels = { control: 0, bounce: 0, magnet: 0, shield: 0, boost: 0 };
 let shieldCharges = 0;
+
+// ---------- CHECKPOINTS ----------
+const CHECKPOINT_INTERVAL = 1000;  // px saliti tra un checkpoint e l'altro
+let highestCheckpointY = 0;        // Y del checkpoint più alto raggiunto (persistito)
+let checkpointPlatforms = [];      // riferimenti ai checkpoint attivi
+let respawnCheckpointY = null;    // checkpoint corrente per respawn
 let shieldRing = null;
 let creditsHud = null;
 let lastTapT = 0;           // timestamp dell'ultimo tap (per salto caricato)
@@ -814,6 +820,19 @@ function saveBossesDefeated() {
     } catch (e) { /* storage non disponibile */ }
 }
 
+// ---------- PERSISTENZA CHECKPOINTS ----------
+function loadCheckpoints() {
+    try {
+        highestCheckpointY = parseInt(localStorage.getItem('neonjump_checkpoint_y') || '0', 10) || 0;
+    } catch (e) { /* storage non disponibile */ }
+}
+
+function saveCheckpoints() {
+    try {
+        localStorage.setItem('neonjump_checkpoint_y', String(highestCheckpointY));
+    } catch (e) { /* storage non disponibile */ }
+}
+
 // ---------- SHOP (schermata game over) ----------
 let shopRows = null;
 let shopCreditsText = null;
@@ -956,6 +975,20 @@ function preload() {
     g.fillStyle(0xffffff, 1);
     g.fillRect(0,0,4,4);
     g.generateTexture('particle', 4, 4);
+    g.clear();
+
+    // 6. Texture Checkpoint (bandiera/beacon)
+    g.lineStyle(2, 0xffffff, 1);
+    g.fillStyle(0x00ff9d, 0.9);
+    // stelo
+    g.fillRect(14, 4, 3, 24);
+    // bandiera
+    g.fillTriangle(17, 4, 30, 10, 17, 16);
+    g.strokeRect(14, 4, 3, 24);
+    g.strokeTriangle(17, 4, 30, 10, 17, 16);
+    g.generateTexture('checkpoint', 32, 32);
+    g.clear();
+
     g.destroy();
 }
 
@@ -971,10 +1004,15 @@ function create() {
     loadPersisted();
     loadUpgrades();
     bossIndex = loadBossesDefeated(); // Carica i boss sconfitti precedenti
+    loadCheckpoints();
     shieldCharges = upLevels.shield;
     boss = null;
     bossBullets = [];
     bossActive = false;
+
+    // Reset checkpoints
+    checkpointPlatforms = [];
+    respawnCheckpointY = null;
 
     // Sfondo Gradiente (segue la camera in scorrimento verticale)
     bgGradient = this.add.graphics().setScrollFactor(0);
@@ -1051,6 +1089,9 @@ function create() {
     this.physics.add.collider(player, platforms, jumpOnPlatform, null, this);
     this.physics.add.overlap(player, coins, collectCoin, null, this);
     this.physics.add.overlap(player, enemies, hitEnemy, null, this);
+
+    // Checkpoint: overlap detection
+    this.physics.add.overlap(player, checkpointPlatforms, activateCheckpoint, null, this);
 
     // Controlli Tastiera
     cursors = this.input.keyboard.createCursorKeys();
@@ -1157,7 +1198,8 @@ function startTutorial(scene) {
         [200, 452, 'ARANCIO=fragile  VERDE=molla', '10px', '#8899aa', false],
         [200, 468, 'BLU=mobile  GIALLO=traballante', '10px', '#8899aa', false],
         [200, 484, 'Ad ogni zona: un BOSS! Salta in testa', '10px', '#ff0033', false],
-        [200, 498, 'Gli upgrade si comprano al game over', '11px', '#8899aa', false]
+        [200, 498, 'Gli upgrade si comprano al game over', '11px', '#8899aa', false],
+        [200, 516, 'VERDE bandiera = CHECKPOINT (respawn)', '10px', '#00ff9d', false]
     ];
     lines.forEach(([x, y, txt, size, color, bold]) => {
         let t = scene.add.text(x, y, txt, {
@@ -1271,6 +1313,12 @@ function update(time, delta) {
         if (child && child.y > cullLine) child.destroy();
     });
 
+    // Culling checkpoint lontani
+    checkpointPlatforms = checkpointPlatforms.filter(cp => {
+        if (cp.y > cullLine) { cp.destroy(); return false; }
+        return true;
+    });
+
     // Rimbalzo nemici sui bordi (niente world bounds, mondo infinito in verticale).
     // Si inverte la velocità SOLO se il nemico sta andando verso il muro,
     // altrimenti la condizione resta vera per più frame e il nemico resta bloccato.
@@ -1363,9 +1411,14 @@ function update(time, delta) {
     }
     updateBossBullets(this, delta);
 
-    // Safety: se cadi oltre la zona di culling (più piattaforme presenti) → game over
+    // Safety: se cadi oltre la zona di culling → respawn a checkpoint o game over
     if (player.y > cullLine) {
-        triggerGameOver(this, 'CADUTO NELL\'ABISSO');
+        if (respawnCheckpointY !== null && respawnCheckpointY < player.y) {
+            // Respawn all'ultimo checkpoint
+            respawnAtCheckpoint(this);
+        } else {
+            triggerGameOver(this, 'CADUTO NELL\'ABISSO');
+        }
     }
 
     // Punteggio basato sull'altezza massima raggiunta (persistente: se cadi non lo perdi)
@@ -1493,6 +1546,15 @@ function spawnPlatform(scene, yPos) {
     if (climbed > 1200) { pool.push('moving', 'wobbly'); }
     let type = pool[Math.floor(Math.random() * pool.length)];
 
+    // CHECKPOINT: ogni CHECKPOINT_INTERVAL px saliti, una piattaforma diventa checkpoint
+    // La piattaforma più vicina alla multipla di CHECKPOINT_INTERVAL viene marcata
+    let prevClimbed = climbed - SPAWN_GAP;
+    let isCheckpoint = Math.floor(climbed / CHECKPOINT_INTERVAL) > Math.floor(prevClimbed / CHECKPOINT_INTERVAL);
+
+    if (isCheckpoint) {
+        type = 'normal'; // checkpoint è sempre piattaforma normale
+    }
+
     let tex = (type === 'normal') ? 'platform' : 'plat_' + type;
     let platform = platforms.create(x, yPos, tex);
     platform.refreshBody();
@@ -1501,6 +1563,26 @@ function spawnPlatform(scene, yPos) {
     // Re-applica il pipeline in sicurezza se WebGL è attivo
     if (canUseGlow(scene)) {
         platform.setPostPipeline('GlowFX');
+    }
+
+    // CHECKPOINT: aggiunge la bandiera sopra la piattaforma
+    if (isCheckpoint) {
+        let cp = scene.physics.add.image(x, yPos - 28, 'checkpoint').setDepth(5);
+        cp.body.setAllowGravity(false);
+        cp.body.setImmovable(true);
+        cp.setData('yPos', yPos);
+        cp.setData('activated', false);
+        checkpointPlatforms.push(cp);
+        platform.setData('checkpoint', true);
+        // Effetto glow pulsante
+        scene.tweens.add({
+            targets: cp,
+            scaleX: 1.1, scaleY: 1.1,
+            duration: 600,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut'
+        });
     }
 
     if (Math.random() < 0.35) {
@@ -1532,6 +1614,80 @@ function collectCoin(player, coin) {
     creditsHud.setText('CREDITS: ' + (credits + runCoins));
     sfxCoin();
     this.tweens.add({ targets: scoreText, scale: 1.1, duration: 100, yoyo: true });
+}
+
+// ---------- CHECKPOINT ----------
+function activateCheckpoint(player, checkpoint) {
+    if (checkpoint.getData('activated')) return;
+    checkpoint.setData('activated', true);
+
+    let cpY = checkpoint.getData('yPos');
+    respawnCheckpointY = cpY;
+
+    // Aggiorna il checkpoint più alto raggiunto
+    let climbed = 570 - cpY;
+    if (climbed > highestCheckpointY) {
+        highestCheckpointY = climbed;
+        saveCheckpoints();
+    }
+
+    // Feedback visivo: la bandiera cambia colore (diventa attiva)
+    checkpoint.setTint(0x00ff9d);
+    checkpoint.setScale(1.3);
+    this.tweens.add({
+        targets: checkpoint,
+        scaleX: 1.0, scaleY: 1.0,
+        duration: 300,
+        ease: 'Back.easeOut'
+    });
+
+    // Flash + suono
+    this.cameras.main.flash(200, 0, 255, 150);
+    beep(880, 0.15, 'sine', 0.08, 1760);
+
+    // Mostra testo "CHECKPOINT!"
+    let txt = this.add.text(player.x, player.y - 40, 'CHECKPOINT!', {
+        fontSize: '14px', fill: '#00ff9d', fontFamily: 'Courier New, monospace', fontStyle: 'bold',
+        stroke: '#000000', strokeThickness: 2
+    }).setOrigin(0.5).setDepth(100);
+    this.tweens.add({
+        targets: txt,
+        y: txt.y - 30, alpha: 0,
+        duration: 1000,
+        onComplete: () => txt.destroy()
+    });
+}
+
+function respawnAtCheckpoint(scene) {
+    // Penalità: perdi metà delle monete della run corrente
+    let penalty = Math.floor(runCoins / 2);
+    runCoins -= penalty;
+    if (runCoins < 0) runCoins = 0;
+
+    // Teletrasporto al checkpoint
+    player.setPosition(200, respawnCheckpointY - 30);
+    player.setVelocity(0, 0);
+    bestY = respawnCheckpointY - 30;
+
+    // Aggiorna HUD
+    creditsHud.setText('CREDITS: ' + (credits + runCoins));
+
+    // Feedback visivo
+    scene.cameras.main.flash(300, 255, 100, 0);
+    scene.cameras.main.centerOn(200, respawnCheckpointY - 30);
+    beep(330, 0.2, 'sawtooth', 0.06, 110);
+
+    // Testo "RESPAWN!"
+    let txt = scene.add.text(200, respawnCheckpointY - 60, 'RESPAWN!' + (penalty > 0 ? ' (-' + penalty + ' CR)' : ''), {
+        fontSize: '16px', fill: '#ff9d00', fontFamily: 'Courier New, monospace', fontStyle: 'bold',
+        stroke: '#000000', strokeThickness: 2
+    }).setOrigin(0.5).setDepth(100);
+    scene.tweens.add({
+        targets: txt,
+        y: txt.y - 30, alpha: 0,
+        duration: 1200,
+        onComplete: () => txt.destroy()
+    });
 }
 
 function hitEnemy(player, enemy) {
@@ -1688,6 +1844,13 @@ function drawStats(scene) {
         statsObjs.push(upText);
         cy += 20;
     });
+
+    // Checkpoint stats
+    cy += 10;
+    let cpText = scene.add.text(200, cy, 'CHECKPOINT: ' + Math.floor(highestCheckpointY) + 'px', {
+        fontSize: '12px', fill: '#00ff9d', fontFamily: 'Courier New, monospace'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
+    statsObjs.push(cpText);
 
     let closeText = scene.add.text(200, py + panelH - 20, 'PREMI S PER CHIUDERE', {
         fontSize: '11px', fill: '#888888', fontFamily: 'Courier New, monospace'
