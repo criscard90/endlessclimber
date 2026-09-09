@@ -420,6 +420,7 @@ function spawnBoss(scene) {
         hist: [], key: null, keyTaken: false, rise: 0, alphaV: 1,
         aggressive: false, backdoorCooldown: Phaser.Math.FloatBetween(3.5, 6),
         backdoorActive: false, backdoorShots: 0, backdoorShotCooldown: 0,
+        aiWeapon: null, aiWeaponTime: 0, aiLaserTime: 0, aiGravityTime: 0,
         escapeTime: def.key === 'DATALOSS' ? 10 : 0, timerText: null,
         g: scene.add.graphics().setDepth(3)
     };
@@ -510,6 +511,7 @@ function bossStomp(cy) {
 function startBackdoor(scene, b) {
     b.backdoorActive = true;
     b.backdoorShots = b.aggressive ? 7 : 5;
+    b.backdoorDelay = 1;
     b.backdoorShotCooldown = 0;
     b.backdoorX = player.x;
     b.backdoorY = player.y + 90;
@@ -521,6 +523,8 @@ function startBackdoor(scene, b) {
 }
 
 function updateBackdoor(scene, b, d) {
+    b.backdoorDelay -= d;
+    if (b.backdoorDelay > 0) return;
     b.backdoorShotCooldown -= d;
     if (b.backdoorShots > 0 && b.backdoorShotCooldown <= 0) {
         let spread = Phaser.Math.FloatBetween(-70, 70);
@@ -538,13 +542,52 @@ function updateBackdoor(scene, b, d) {
         let distance = Math.hypot(dx, dy) || 1;
         bossBullets.push({
             kind: 'missile', x: b.backdoorX, y: b.backdoorY,
-            vx: dx / distance * 220, vy: dy / distance * 220
+            vx: dx / distance * 220, vy: dy / distance * 220,
+            life: 2
         });
         beep(180, 0.25, 'square', 0.08, 60);
     }
     if (b.backdoorMissileLaunched && bossBullets.every(bl => !bl || bl.kind !== 'missile')) {
         b.backdoorActive = false;
         b.backdoorMissileLaunched = false;
+    }
+}
+
+function fireAIWeapon(b) {
+    let weapons = ['decoy', 'laser', 'gravity', 'drones', 'predictive'];
+    b.aiWeapon = Phaser.Utils.Array.GetRandom(weapons);
+    b.aiWeaponTime = 1.8;
+    b.aiLaserTime = 0;
+    b.aiGravityTime = 0;
+    if (b.aiWeapon === 'decoy') {
+        for (let i = -1; i <= 1; i++) {
+            bossBullets.push({ kind: 'ai-decoy', x: b.x + i * 28, y: b.y, vx: i * 75, vy: 180 });
+        }
+    } else if (b.aiWeapon === 'drones') {
+        for (let i = -1; i <= 1; i++) {
+            bossBullets.push({ kind: 'ai-drone', x: b.x + i * 30, y: b.y, vx: i * 130, vy: 110 });
+        }
+    } else if (b.aiWeapon === 'predictive') {
+        let leadX = player.x + player.body.velocity.x * 0.45;
+        let leadY = player.y + player.body.velocity.y * 0.25;
+        let dx = leadX - b.x, dy = leadY - b.y;
+        let distance = Math.hypot(dx, dy) || 1;
+        bossBullets.push({ kind: 'ai-predictive', x: b.x, y: b.y, vx: dx / distance * 240, vy: dy / distance * 240 });
+    } else if (b.aiWeapon === 'laser') {
+        b.aiLaserTime = 1.2;
+    } else if (b.aiWeapon === 'gravity') {
+        b.aiGravityTime = 1.2;
+    }
+}
+
+function updateAIWeapon(scene, b, d) {
+    b.aiWeaponTime = Math.max(0, b.aiWeaponTime - d);
+    b.aiLaserTime = Math.max(0, b.aiLaserTime - d);
+    b.aiGravityTime = Math.max(0, b.aiGravityTime - d);
+    if (b.aiGravityTime > 0) player.body.velocity.y *= Math.max(0, 1 - d * 1.8);
+    let inLaserColumn = player.y > b.y + 28 && player.y < 570;
+    if (b.aiLaserTime > 0 && inLaserColumn && Math.abs(player.x - b.x) < 22) {
+        damagePlayer(scene);
     }
 }
 
@@ -743,13 +786,14 @@ function updateBoss(scene, delta) {
             damagePlayer(scene); return;
         }
     } else if (type === 'AI') {
+        b.hitCooldown = Math.max(0, b.hitCooldown - d);
         b.y += (followY - b.y) * 0.6 * d;
         b.phase = b.hp >= 4 ? 1 : (b.hp >= 2 ? 2 : 3);
         if (b.phase === 1) {
             b.x = 200 + Math.sin(b.t * 0.7) * 80;
             b.cool -= d;
             if (b.cool <= 0) {
-                for (let i = -2; i <= 2; i++) bossBullets.push({ x: b.x, y: b.y + 18, vx: i * 55, vy: 200 });
+                fireAIWeapon(b);
                 b.cool = 2.2;
             }
             b.vulnerable = true;
@@ -768,13 +812,29 @@ function updateBoss(scene, delta) {
                 b.x += dx / dd * 420 * d; b.y += dy / dd * 420 * d;
                 if (dd < 14) { b.state = 'rest'; b.st = 0; }
             }
-            b.vulnerable = true;
+            b.vulnerable = b.state === 'rest';
+        }
+        updateAIWeapon(scene, b, d);
+        let aiStomp = player.body.velocity.y > 0 &&
+            player.y > b.y - 45 && player.y < b.y - 2 &&
+            Math.abs(player.x - b.x) < 32;
+        if (aiStomp) {
+            if (b.vulnerable && b.hitCooldown <= 0) {
+                hitBoss(scene, 1);
+                if (!boss) return;
+                b.hitCooldown = 0.45;
+                bossBannerText(scene, 'AI HP: ' + b.hp, C_YELLOW_CSS, 305);
+            }
+            player.setVelocityY(-650);
+            return;
         }
         if (bossOverlap(b.x, b.y, b.r + 6)) {
             if (bossStomp(b.y)) {
-                if (b.vulnerable) {
+                if (b.vulnerable && b.hitCooldown <= 0) {
                     hitBoss(scene, 1);
                     if (!boss) return;
+                    b.hitCooldown = 0.45;
+                    bossBannerText(scene, 'AI HP: ' + b.hp, C_YELLOW_CSS, 305);
                 }
                 player.setVelocityY(-650);
                 return;
@@ -903,6 +963,12 @@ function drawBoss(b, g) {
         g.fillPoints(pts, true);
         g.lineStyle(2, 0xffffff, 0.7);
         g.strokePoints(pts, true, true);
+        if (b.aiLaserTime > 0) {
+            g.fillStyle(0xff0033, 0.24);
+            g.fillRect(b.x - 22, b.y + 28, 44, 570 - b.y);
+            g.lineStyle(3, 0xff0033, 0.9);
+            g.lineBetween(b.x, b.y + 28, b.x, 570);
+        }
     }
     if (b.maxHp > 1 && (b.type !== 'ROOTKIT' || b.alphaV > 0.15)) {
         for (let i = 0; i < b.maxHp; i++) {
@@ -919,6 +985,13 @@ function updateBossBullets(scene, delta) {
         if (!bl) {
             bossBullets.splice(i, 1);
             continue;
+        }
+        if (bl.kind === 'missile') {
+            bl.life -= d;
+            if (bl.life <= 0) {
+                bossBullets.splice(i, 1);
+                continue;
+            }
         }
         if (bl.kind === 'missile') {
             let dx = player.x - bl.x;
@@ -982,6 +1055,19 @@ function updateBossBullets(scene, delta) {
             bulletG.fillCircle(bl.x, bl.y, 5);
             bulletG.lineStyle(2, 0xffffff, 0.8);
             bulletG.strokeCircle(bl.x, bl.y, 8);
+        } else if (bl.kind === 'ai-decoy') {
+            bulletG.fillStyle(0xff9d00, 0.95);
+            bulletG.fillTriangle(bl.x, bl.y - 8, bl.x - 8, bl.y + 7, bl.x + 8, bl.y + 7);
+        } else if (bl.kind === 'ai-drone') {
+            bulletG.fillStyle(0x00ff9d, 0.95);
+            bulletG.fillRect(bl.x - 6, bl.y - 4, 12, 8);
+            bulletG.lineStyle(2, 0xffffff, 0.8);
+            bulletG.strokeCircle(bl.x, bl.y, 9);
+        } else if (bl.kind === 'ai-predictive') {
+            bulletG.fillStyle(0xff00ff, 0.95);
+            bulletG.fillCircle(bl.x, bl.y, 6);
+            bulletG.lineStyle(2, 0xffffff, 0.8);
+            bulletG.lineBetween(bl.x - 8, bl.y, bl.x + 8, bl.y);
         } else {
             bulletG.fillStyle(0x00ccff, 0.9);
             bulletG.fillCircle(bl.x, bl.y, 5);
@@ -2085,9 +2171,15 @@ function ensureRespawnPlatforms(cpX, cpY) {
     recoveryPlatforms.forEach(target => {
         let exists = false;
         platforms.children.iterate(platform => {
-            if (platform && platform.active &&
-                Math.abs(platform.x - target.x) < 42 &&
-                Math.abs(platform.y - target.y) < 24) exists = true;
+            if (!platform || !platform.active) return;
+            let platformHalfWidth = (platform.body && platform.body.width
+                ? platform.body.width
+                : 80) / 2;
+            let targetHalfWidth = 40;
+            let verticalOverlap = Math.abs(platform.y - target.y) < 26;
+            let horizontalOverlap = Math.abs(platform.x - target.x) <
+                platformHalfWidth + targetHalfWidth + 4;
+            if (verticalOverlap && horizontalOverlap) exists = true;
         });
         if (exists) return;
 
