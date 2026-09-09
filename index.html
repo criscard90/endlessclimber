@@ -417,24 +417,40 @@ function spawnBoss(scene) {
         vx: (Math.random() < 0.5 ? -1 : 1) * 60,
         r: 20, cool: 1.5, vulnerable: true,
         hist: [], key: null, keyTaken: false, rise: 0, alphaV: 1,
+        aggressive: false, backdoorCooldown: Phaser.Math.FloatBetween(3.5, 6),
+        backdoorActive: false, backdoorShots: 0, backdoorShotCooldown: 0,
+        escapeTime: def.key === 'DATALOSS' ? 10 : 0, timerText: null,
         g: scene.add.graphics().setDepth(3)
     };
-    if (def.key === 'DATALOSS') boss.y = player.y + 420; // sale dal basso
+    if (def.key === 'DATALOSS') boss.y = player.y + 250; // entra dal bordo inferiore
     if (def.key === 'FIREWALL') boss.y = player.y - 260;
     bossActive = true;
     songQueue = ['S', 'S']; queuePos = 0; sectionStep = 0; // musica boss: special in loop
-    bossBannerText(scene, 'BOSS: ' + def.key, '#ff0033');
+    bossBannerText(scene, 'BOSS: ' + def.key, '#ff0033', def.key === 'DATALOSS' ? 175 : 220);
+    if (def.key === 'DATALOSS') {
+        bossBannerText(scene, 'SCAPPA VERSO L\'ALTO!', '#00f0ff', 125);
+        boss.timerText = scene.add.text(200, 300, '10', {
+            fontSize: '64px', fill: C_RED_CSS, fontFamily: 'Courier New, monospace',
+            fontStyle: 'bold', stroke: '#000000', strokeThickness: 5
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(6);
+        boss.timerText.setScale(2.2);
+        scene.tweens.add({
+            targets: boss.timerText, scaleX: 1, scaleY: 1,
+            duration: 350, ease: 'Back.easeOut'
+        });
+    }
     beep(110, 0.6, 'sawtooth', 0.1, 55);
 }
 
-function bossBannerText(scene, txt, color) {
-    let banner = scene.add.text(200, 220, txt, {
+function bossBannerText(scene, txt, color, y) {
+    let banner = scene.add.text(200, y === undefined ? 220 : y, txt, {
         fontSize: '24px', fill: color, fontFamily: 'Courier New, monospace', fontStyle: 'bold'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(5).setAlpha(0);
     scene.tweens.add({ targets: banner, alpha: 1, duration: 250, yoyo: true, hold: 1100, onComplete: () => banner.destroy() });
 }
 
 function endBoss(scene, defeated) {
+    if (boss && boss.timerText) boss.timerText.destroy();
     if (boss && boss.type === 'RANSOMWARE') {
         platforms.children.iterate(p => {
             if (!p || !p.body) return;
@@ -446,7 +462,7 @@ function endBoss(scene, defeated) {
     }
     if (defeated) {
         deathEmitter.emitParticleAt(boss.x, boss.y, 30);
-        bossBannerText(scene, 'BOSS SCONFITTO!', C_CYAN_CSS);
+        bossBannerText(scene, 'BOSS SCONFITTO!', C_CYAN_CSS, 370);
         beep(523, 0.12, 'square', 0.08);
         setTimeout(() => beep(659, 0.12, 'square', 0.08), 130);
         setTimeout(() => beep(784, 0.25, 'square', 0.09), 260);
@@ -484,6 +500,47 @@ function bossOverlap(cx, cy, r) {
 
 function bossStomp(cy) {
     return player.body.velocity.y > 0 && player.y < cy - 2;
+}
+
+function startBackdoor(scene, b) {
+    b.backdoorActive = true;
+    b.backdoorShots = b.aggressive ? 7 : 5;
+    b.backdoorShotCooldown = 0;
+    b.backdoorX = player.x;
+    b.backdoorY = player.y + 90;
+    b.backdoorCooldown = b.aggressive
+        ? Phaser.Math.FloatBetween(3.5, 5)
+        : Phaser.Math.FloatBetween(6, 8);
+    bossBannerText(scene, 'BACKDOOR!', C_RED_CSS, 345);
+    beep(90, 0.3, 'sawtooth', 0.08, 35);
+}
+
+function updateBackdoor(scene, b, d) {
+    b.backdoorShotCooldown -= d;
+    if (b.backdoorShots > 0 && b.backdoorShotCooldown <= 0) {
+        let spread = Phaser.Math.FloatBetween(-70, 70);
+        bossBullets.push({
+            kind: 'backdoor', x: b.backdoorX, y: b.backdoorY,
+            vx: spread, vy: -280
+        });
+        b.backdoorShots--;
+        b.backdoorShotCooldown = b.aggressive ? 0.18 : 0.28;
+    }
+    if (b.backdoorShots === 0 && !b.backdoorMissileLaunched) {
+        b.backdoorMissileLaunched = true;
+        let dx = player.x - b.backdoorX;
+        let dy = player.y - b.backdoorY;
+        let distance = Math.hypot(dx, dy) || 1;
+        bossBullets.push({
+            kind: 'missile', x: b.backdoorX, y: b.backdoorY,
+            vx: dx / distance * 220, vy: dy / distance * 220
+        });
+        beep(180, 0.25, 'square', 0.08, 60);
+    }
+    if (b.backdoorMissileLaunched && bossBullets.every(bl => !bl || bl.kind !== 'missile')) {
+        b.backdoorActive = false;
+        b.backdoorMissileLaunched = false;
+    }
 }
 
 // ---------- UPDATE BOSS (comportamenti) ----------
@@ -627,31 +684,54 @@ function updateBoss(scene, delta) {
             damagePlayer(scene); return;
         }
     } else if (type === 'DATALOSS') {
-        b.rise += 60 * d;
-        b.y -= 60 * d;
-        b.x += (player.x - b.x) * 0.2 * d;
+        b.escapeTime -= d;
+        b.rise += 210 * d;
+        b.y -= 210 * d;
+        b.x += Phaser.Math.Clamp(player.x - b.x, -180 * d, 180 * d);
+        let seconds = Math.max(0, Math.ceil(b.escapeTime));
+        if (b.timerText && seconds !== b.timerText.getData('seconds')) {
+            b.timerText.setData('seconds', seconds);
+            b.timerText.setText(String(seconds));
+            b.timerText.setScale(2.2);
+            scene.tweens.add({
+                targets: b.timerText, scaleX: 1, scaleY: 1,
+                duration: 350, ease: 'Back.easeOut'
+            });
+        }
         platforms.children.iterate(p => {
-            if (p && Math.abs(p.y - b.y) < 70 && Math.abs(p.x - b.x) < 90) p.destroy();
+            if (p && !p.getData('checkpoint') &&
+                Math.abs(p.y - b.y) < 70 && Math.abs(p.x - b.x) < 65) p.destroy();
         });
-        if (bossOverlap(b.x, b.y, 34)) { damagePlayer(scene); return; }
-        if (player.y < b.y - 300 || b.rise > 2400) { endBoss(scene, false); return; }
+        if (bossOverlap(b.x, b.y, 48)) { damagePlayer(scene); return; }
+        if (b.escapeTime <= 0) { endBoss(scene, true); return; }
     } else if (type === 'ROOTKIT') {
         b.st += d;
+        let visibleTime = b.aggressive ? 1.2 : 2.5;
+        let invisibleTime = b.aggressive ? 0.8 : 2.2;
         if (b.state === 'vis') {
-            if (b.st > 2.5) { b.state = 'invis'; b.st = 0; }
-        } else if (b.st > 2.2) {
+            if (b.st > visibleTime) { b.state = 'invis'; b.st = 0; }
+        } else if (b.st > invisibleTime) {
             b.state = 'vis'; b.st = 0;
             b.x = Phaser.Math.Between(70, 330);
             b.y = player.y - Phaser.Math.Between(140, 260);
             beep(900, 0.08, 'square', 0.05, 300);
         }
+        b.backdoorCooldown -= d;
+        if (!b.backdoorActive && b.backdoorCooldown <= 0) startBackdoor(scene, b);
+        if (b.backdoorActive) updateBackdoor(scene, b, d);
         b.alphaV = b.state === 'vis'
             ? Math.min(1, b.alphaV + d * 4)
             : Math.max(0, b.alphaV - d * 4);
-        if (b.state === 'vis' && bossOverlap(b.x, b.y, b.r)) {
+        if (b.state === 'vis' && b.hitCooldown <= 0 && bossOverlap(b.x, b.y, b.r)) {
             if (bossStomp(b.y)) {
                 hitBoss(scene, 1);
                 if (!boss) return;
+                if (!b.aggressive) {
+                    b.aggressive = true;
+                    b.backdoorCooldown = 1.5;
+                    bossBannerText(scene, 'ROOTKIT: BACKDOOR ATTIVA!', C_RED_CSS, 305);
+                }
+                b.hitCooldown = 0.45;
                 player.setVelocityY(-650);
                 return;
             }
@@ -819,7 +899,7 @@ function drawBoss(b, g) {
         g.lineStyle(2, 0xffffff, 0.7);
         g.strokePoints(pts, true, true);
     }
-    if (b.maxHp > 1) {
+    if (b.maxHp > 1 && (b.type !== 'ROOTKIT' || b.alphaV > 0.15)) {
         for (let i = 0; i < b.maxHp; i++) {
             g.fillStyle(i < b.hp ? 0xff0033 : 0x444444, 1);
             g.fillCircle(b.x - (b.maxHp - 1) * 7 + i * 14, b.y - 42, 4);
@@ -835,6 +915,25 @@ function updateBossBullets(scene, delta) {
             bossBullets.splice(i, 1);
             continue;
         }
+        if (bl.kind === 'missile') {
+            let dx = player.x - bl.x;
+            let dy = player.y - bl.y;
+            let distance = Math.hypot(dx, dy) || 1;
+            let targetVx = dx / distance * 260;
+            let targetVy = dy / distance * 260;
+            bl.vx += Phaser.Math.Clamp(targetVx - bl.vx, -1800 * d, 1800 * d);
+            bl.vy += Phaser.Math.Clamp(targetVy - bl.vy, -1800 * d, 1800 * d);
+            platforms.children.iterate(platform => {
+                if (platform && platform.active && platform.body.enable &&
+                    !platform.getData('ransomDisabled') &&
+                    Math.abs(bl.x - platform.x) < 42 &&
+                    Math.abs(bl.y - platform.y) < 18) bl.hitPlatform = true;
+            });
+            if (bl.hitPlatform) {
+                bossBullets.splice(i, 1);
+                continue;
+            }
+        }
         bl.x += bl.vx * d;
         bl.y += bl.vy * d;
         if (Math.hypot(player.x - bl.x, player.y - bl.y) < 16) {
@@ -846,9 +945,29 @@ function updateBossBullets(scene, delta) {
         if (bl.y > scene.cameras.main.scrollY + 700) bossBullets.splice(i, 1);
     }
     bulletG.clear();
+    if (boss && boss.type === 'ROOTKIT' && boss.backdoorActive) {
+        bulletG.fillStyle(0x000000, 0.95);
+        bulletG.fillCircle(boss.backdoorX, boss.backdoorY, 18 + Math.sin(boss.t * 9) * 3);
+        bulletG.lineStyle(3, 0x9900ff, 0.9);
+        bulletG.strokeCircle(boss.backdoorX, boss.backdoorY, 25 + Math.sin(boss.t * 7) * 4);
+        bulletG.lineStyle(2, 0xff00cc, 0.6);
+        bulletG.strokeCircle(boss.backdoorX, boss.backdoorY, 32 + Math.sin(boss.t * 5) * 3);
+    }
     bossBullets.forEach(bl => {
-        bulletG.fillStyle(0x00ccff, 0.9);
-        bulletG.fillCircle(bl.x, bl.y, 5);
+        if (bl.kind === 'missile') {
+            bulletG.fillStyle(0xff0033, 1);
+            bulletG.fillTriangle(bl.x + 9, bl.y, bl.x - 8, bl.y - 5, bl.x - 8, bl.y + 5);
+            bulletG.fillStyle(0xff9d00, 1);
+            bulletG.fillCircle(bl.x - 10, bl.y, 4);
+        } else if (bl.kind === 'backdoor') {
+            bulletG.fillStyle(0xff00cc, 0.95);
+            bulletG.fillCircle(bl.x, bl.y, 5);
+            bulletG.lineStyle(2, 0xffffff, 0.8);
+            bulletG.strokeCircle(bl.x, bl.y, 8);
+        } else {
+            bulletG.fillStyle(0x00ccff, 0.9);
+            bulletG.fillCircle(bl.x, bl.y, 5);
+        }
     });
 }
 
@@ -986,7 +1105,7 @@ function showShop(scene) {
     }).setOrigin(0.5).setScrollFactor(0);
     refreshShop();
 
-    scene.add.text(200, 560, '- TOCCA PER RIGIOCARE -', {
+    scene.add.text(200, 560, '- TOCCA O PREMI ENTER PER RIGIOCARE -', {
         fontSize: '14px', fill: '#aaaaaa', fontFamily: 'Courier New, monospace'
     }).setOrigin(0.5).setScrollFactor(0).setInteractive({ useHandCursor: true })
         .on('pointerdown', () => scene.scene.restart());
@@ -1318,6 +1437,9 @@ function create() {
 
     this.input.keyboard.on('keydown-M', toggleMusic);
     this.input.keyboard.on('keydown-D', () => showDifficultyMenu(this));
+    this.input.keyboard.on('keydown-ENTER', () => {
+        if (gameOver) this.scene.restart();
+    });
 
     // Tutorial solo alla prima apertura
     let tutSeen = false;
@@ -1882,12 +2004,16 @@ function respawnAtCheckpoint(scene) {
         respawnCheckpointPlatform = newPlat;
     }
 
+    ensureRespawnPlatforms(cpX, cpY);
+
     // Teletrasporto al checkpoint (sopra la piattaforma)
     let respawnY = cpY - 26;
     player.body.reset(cpX, respawnY);
     player.setVelocity(0, 0);
     lastGroundedY = respawnY;
     bestY = respawnY;
+
+    if (boss) restartBossAfterRespawn(scene);
 
     // Aggiorna HUD
     creditsHud.setText('CREDITS: ' + (credits + runCoins));
@@ -1910,6 +2036,52 @@ function respawnAtCheckpoint(scene) {
     });
 }
 
+function restartBossAfterRespawn(scene) {
+    let bossType = boss.type;
+    if (boss.timerText) boss.timerText.destroy();
+    boss.g.destroy();
+    boss = null;
+    bossBullets = [];
+    bossActive = false;
+
+    if (bossType === 'RANSOMWARE') {
+        platforms.children.iterate(platform => {
+            if (!platform || !platform.body) return;
+            platform.body.enable = true;
+            platform.body.checkCollision.none = false;
+            platform.setData('ransomDisabled', false);
+            platform.alpha = 1;
+        });
+    }
+
+    spawnBoss(scene);
+}
+
+function ensureRespawnPlatforms(cpX, cpY) {
+    let recoveryPlatforms = [
+        { x: cpX, y: cpY - SPAWN_GAP },
+        { x: Phaser.Math.Clamp(cpX + 75, 45, 355), y: cpY - SPAWN_GAP * 2 },
+        { x: Phaser.Math.Clamp(cpX - 75, 45, 355), y: cpY - SPAWN_GAP * 3 }
+    ];
+
+    recoveryPlatforms.forEach(target => {
+        let exists = false;
+        platforms.children.iterate(platform => {
+            if (platform && platform.active &&
+                Math.abs(platform.x - target.x) < 42 &&
+                Math.abs(platform.y - target.y) < 24) exists = true;
+        });
+        if (exists) return;
+
+        let platform = platforms.create(target.x, target.y, 'platform');
+        platform.refreshBody();
+        platform.setData({
+            type: 'normal', baseX: target.x, t: 0,
+            hits: 0, tilt: 0, dx: 0, recovery: true
+        });
+    });
+}
+
 function hitEnemy(player, enemy) {
     // SHIELD: assorbe il colpo, distrugge il nemico e consuma una carica
     if (shieldCharges > 0) {
@@ -1926,6 +2098,7 @@ function triggerGameOver(scene, reason) {
     gameOver = true;
     scene.physics.pause();
     if (boss) {
+        if (boss.timerText) boss.timerText.destroy();
         boss.g.destroy();
         boss = null;
     }
