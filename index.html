@@ -1577,7 +1577,8 @@ function spawnPlatform(scene, yPos) {
     // CHECKPOINT: aggiunge la bandiera sopra la piattaforma
     if (isCheckpoint) {
         let cp = scene.physics.add.image(x, yPos - 28, 'checkpoint').setDepth(5);
-        cp.body.setStatic(true);
+        cp.body.setImmovable(true);
+        cp.body.setAllowGravity(false);
         cp.setData('yPos', yPos);
         cp.setData('activated', false);
         cp.setData('platform', platform);
