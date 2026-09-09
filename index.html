@@ -164,6 +164,7 @@ const BOSSES = [
 ];
 let boss = null;        // boss corrente
 let bossIndex = 0;      // prossimo boss da affrontare
+let bossBanners = [];
 let statsVisible = false; // overlay stats aperto
 let statsObjs = [];       // oggetti grafici degli stats (per nasconderli)
 let bossBullets = [];   // proiettili {x, y, vx, vy}
@@ -446,7 +447,11 @@ function bossBannerText(scene, txt, color, y) {
     let banner = scene.add.text(200, y === undefined ? 220 : y, txt, {
         fontSize: '24px', fill: color, fontFamily: 'Courier New, monospace', fontStyle: 'bold'
     }).setOrigin(0.5).setScrollFactor(0).setDepth(5).setAlpha(0);
-    scene.tweens.add({ targets: banner, alpha: 1, duration: 250, yoyo: true, hold: 1100, onComplete: () => banner.destroy() });
+    bossBanners.push(banner);
+    scene.tweens.add({ targets: banner, alpha: 1, duration: 250, yoyo: true, hold: 1100, onComplete: () => {
+        bossBanners = bossBanners.filter(item => item !== banner);
+        banner.destroy();
+    } });
 }
 
 function endBoss(scene, defeated) {
@@ -936,6 +941,19 @@ function updateBossBullets(scene, delta) {
         }
         bl.x += bl.vx * d;
         bl.y += bl.vy * d;
+        let bulletHalfWidth = bl.kind === 'missile' ? 42 : 20;
+        let bulletHalfHeight = bl.kind === 'missile' ? 18 : 12;
+        let blockedByPlatform = false;
+        platforms.children.iterate(platform => {
+            if (platform && platform.active && platform.body.enable &&
+                !platform.getData('ransomDisabled') &&
+                Math.abs(bl.x - platform.x) < bulletHalfWidth &&
+                Math.abs(bl.y - platform.y) < bulletHalfHeight) blockedByPlatform = true;
+        });
+        if (blockedByPlatform) {
+            bossBullets.splice(i, 1);
+            continue;
+        }
         if (Math.hypot(player.x - bl.x, player.y - bl.y) < 16) {
             bossBullets.splice(i, 1);
             damagePlayer(scene);
@@ -2097,6 +2115,8 @@ function hitEnemy(player, enemy) {
 function triggerGameOver(scene, reason) {
     gameOver = true;
     scene.physics.pause();
+    bossBanners.forEach(banner => banner.destroy());
+    bossBanners = [];
     if (boss) {
         if (boss.timerText) boss.timerText.destroy();
         boss.g.destroy();
@@ -2172,7 +2192,7 @@ function toggleStats(scene) {
 
 function drawStats(scene) {
     // Pannello centrato compatto (non a tutto schermo)
-    let panelW = 340, panelH = 480;
+    let panelW = 340, panelH = 520;
     let px = (400 - panelW) / 2;
     let py = (600 - panelH) / 2;
 
@@ -2209,24 +2229,48 @@ function drawStats(scene) {
         statsObjs.push(noneText);
         cy += 30;
     } else {
-        for (let i = 0; i < bossIndex && i < BOSSES.length; i++) {
-            let b = BOSSES[i];
+        let defeatedBosses = BOSSES.slice(0, Math.min(bossIndex, BOSSES.length));
+        let columnX = [px + 50, px + 170, px + 290];
+        let rowHeight = 56;
+        defeatedBosses.forEach((b, i) => {
+            let row = Math.floor(i / 3);
+            let column = i % 3;
+            let x = columnX[column];
+            let y = cy + row * rowHeight;
             let badge = scene.add.graphics().setScrollFactor(0).setDepth(101);
-            drawMiniBoss(badge, px + 35, cy, b.key);
+            drawMiniBoss(badge, x, y, b.key);
             statsObjs.push(badge);
 
-            let nameText = scene.add.text(px + 65, cy - 8, b.key, {
-                fontSize: '13px', fill: '#ffffff', fontFamily: 'Courier New, monospace', fontStyle: 'bold'
-            }).setScrollFactor(0).setDepth(101);
+            let nameText = scene.add.text(x, y + 21, b.key, {
+                fontSize: '9px', fill: '#ffffff', fontFamily: 'Courier New, monospace',
+                fontStyle: 'bold', align: 'center'
+            }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
             statsObjs.push(nameText);
 
-            let hpText = scene.add.text(px + 65, cy + 8, 'HP:' + b.hp + '  H:' + b.height + 'px', {
-                fontSize: '10px', fill: '#aaaaaa', fontFamily: 'Courier New, monospace'
-            }).setScrollFactor(0).setDepth(101);
+            let hpText = scene.add.text(x, y + 35, 'H:' + b.height, {
+                fontSize: '8px', fill: '#aaaaaa', fontFamily: 'Courier New, monospace', align: 'center'
+            }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
             statsObjs.push(hpText);
-
-            cy += 40;
+        });
+        let rows = Math.ceil(defeatedBosses.length / 3);
+        if (defeatedBosses.length > 9) {
+            let lastBoss = defeatedBosses[9];
+            let lastY = cy + rows * rowHeight;
+            let badge = scene.add.graphics().setScrollFactor(0).setDepth(101);
+            drawMiniBoss(badge, 200, lastY, lastBoss.key);
+            statsObjs.push(badge);
+            let nameText = scene.add.text(200, lastY + 21, lastBoss.key, {
+                fontSize: '9px', fill: '#ffffff', fontFamily: 'Courier New, monospace',
+                fontStyle: 'bold', align: 'center'
+            }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
+            statsObjs.push(nameText);
+            let hpText = scene.add.text(200, lastY + 35, 'H:' + lastBoss.height, {
+                fontSize: '8px', fill: '#aaaaaa', fontFamily: 'Courier New, monospace', align: 'center'
+            }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
+            statsObjs.push(hpText);
+            rows++;
         }
+        cy += rows * rowHeight;
     }
 
     cy += 10;
@@ -2242,7 +2286,7 @@ function drawStats(scene) {
             fontSize: '12px', fill: lvl > 0 ? C_YELLOW_CSS : '#666666', fontFamily: 'Courier New, monospace'
         }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
         statsObjs.push(upText);
-        cy += 20;
+        cy += 18;
     });
 
     // Checkpoint stats
