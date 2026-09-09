@@ -90,6 +90,7 @@ let bestY = 0;          // Altezza massima raggiunta (per il punteggio)
 let nextSpawnY = 0;     // Prossima Y dove generare piattaforme (mondo fisso)
 const SPAWN_GAP = 140;  // Distanza verticale tra piattaforme (spazio per saltare)
 const CULL_MARGIN = 1200; // Distanza sotto la camera oltre cui fare culling
+const FALL_DEATH_DISTANCE = 420; // Distanza dall'ultimo appoggio prima della morte
 let gameOver = false;
 let touchX = null;
 let joyStartX = null;  // posizione iniziale del tocco per il joystick
@@ -120,15 +121,28 @@ let upLevels = { control: 0, bounce: 0, magnet: 0, shield: 0, boost: 0 };
 let shieldCharges = 0;
 
 // ---------- CHECKPOINTS ----------
-const CHECKPOINT_INTERVAL = 1000;  // px saliti tra un checkpoint e l'altro
+const DIFFICULTIES = {
+    easy: { name: 'FACILE', checkpointInterval: 600 },
+    normal: { name: 'NORMALE', checkpointInterval: 1000 },
+    hard: { name: 'DIFFICILE', checkpointInterval: 1600 },
+    nightmare: { name: 'INCUBO', checkpointInterval: 2500 }
+};
+let difficultyKey = 'normal';
+let checkpointInterval = DIFFICULTIES.normal.checkpointInterval;
+let difficultySelected = false;
+let difficultyMenuVisible = false;
 let highestCheckpointY = 0;        // Y del checkpoint più alto raggiunto (persistito)
+let highestCheckpointX = 200;      // X del checkpoint più alto raggiunto (persistito)
 let checkpointPlatforms = null;   // physics group dei checkpoint
 let respawnCheckpointPlatform = null;  // piattaforma checkpoint per respawn
+let lastGroundedY = 0;                 // Ultima quota in cui il player era appoggiato
 let shieldRing = null;
 let creditsHud = null;
 let lastTapT = 0;           // timestamp dell'ultimo tap (per salto caricato)
 let keyDownTime = 0;        // timestamp pressione tasto/touch per salto caricato
 let jumpPressedEdge = false; // un tap/tasto premuto questo frame (per i traballanti)
+let jumpRequest = false;     // salto richiesto al rilascio del tasto o touch
+let jumpRequestCharged = false;
 let tutorialActive = false;
 let tutObjs = [];
 
@@ -396,7 +410,7 @@ function spawnBoss(scene) {
         def: def, type: def.key, hp: def.hp, maxHp: Math.max(def.hp, 1),
         x: Phaser.Math.Between(100, 300),
         y: player.y - 450,
-        t: 0, st: 0, state: 'coin', phase: 0,
+        t: 0, st: 0, state: 'coin', phase: 0, hitCooldown: 0,
         vx: (Math.random() < 0.5 ? -1 : 1) * 60,
         r: 20, cool: 1.5, vulnerable: true,
         hist: [], key: null, keyTaken: false, rise: 0, alphaV: 1,
@@ -466,6 +480,7 @@ function updateBoss(scene, delta) {
     let d = delta / 1000;
     let b = boss, type = b.type;
     b.t += d;
+    b.hitCooldown = Math.max(0, b.hitCooldown - d);
     let followY = player.y - 150;
     if (player.y < b.y - 520 && type !== 'DATALOSS') { endBoss(scene, false); return; }
 
@@ -477,10 +492,12 @@ function updateBoss(scene, delta) {
     } else if (type === 'FIREWALL') {
         b.y += (player.y - 240 - b.y) * 0.5 * d;
         b.gap = 200 + Math.sin(b.t * 0.8) * 150;
-        if (Math.abs(player.y - b.y) < 16 && (player.x < b.gap - 45 || player.x > b.gap + 45)) {
+        let inGap = player.x >= b.gap - 45 && player.x <= b.gap + 45;
+        if (Math.abs(player.y - b.y) < 16 && !inGap) {
             damagePlayer(scene); return;
         }
-        if (player.y < b.y - 320) { endBoss(scene, false); return; }
+        // Il Firewall si sconfigge attraversando la barriera dal varco aperto.
+        if (player.y < b.y - 18 && inGap) { endBoss(scene, true); return; }
     } else if (type === 'MALWARE') {
         let spd = (70 + (b.maxHp - b.hp) * 40) * d;
         let dx = player.x - b.x, dy = (player.y - 140) - b.y;
@@ -630,9 +647,11 @@ function updateBoss(scene, delta) {
 
     if (type === 'GLITCH' || type === 'MALWARE') {
         if (bossOverlap(b.x, b.y, b.r)) {
+            if (b.hitCooldown > 0) return;
             if (bossStomp(b.y)) {
                 hitBoss(scene, 1);
                 if (!boss) return;
+                b.hitCooldown = 0.45;
                 player.setVelocityY(-650);
                 return;
             }
@@ -824,13 +843,39 @@ function saveBossesDefeated() {
 function loadCheckpoints() {
     try {
         highestCheckpointY = parseInt(localStorage.getItem('neonjump_checkpoint_y') || '0', 10) || 0;
+        highestCheckpointX = parseInt(localStorage.getItem('neonjump_checkpoint_x') || '200', 10) || 200;
     } catch (e) { /* storage non disponibile */ }
 }
 
 function saveCheckpoints() {
     try {
         localStorage.setItem('neonjump_checkpoint_y', String(highestCheckpointY));
+        localStorage.setItem('neonjump_checkpoint_x', String(highestCheckpointX));
     } catch (e) { /* storage non disponibile */ }
+}
+
+function loadDifficulty() {
+    try {
+        let saved = localStorage.getItem('neonjump_difficulty');
+        if (saved && DIFFICULTIES[saved]) {
+            difficultyKey = saved;
+            difficultySelected = true;
+        }
+    } catch (e) { /* storage non disponibile */ }
+    checkpointInterval = DIFFICULTIES[difficultyKey].checkpointInterval;
+}
+
+function chooseDifficulty(scene, key) {
+    difficultyKey = key;
+    checkpointInterval = DIFFICULTIES[key].checkpointInterval;
+    difficultySelected = true;
+    difficultyMenuVisible = false;
+    try {
+        localStorage.setItem('neonjump_difficulty', key);
+        localStorage.removeItem('neonjump_checkpoint_y');
+        localStorage.removeItem('neonjump_checkpoint_x');
+    } catch (e) { /* storage non disponibile */ }
+    scene.scene.restart();
 }
 
 // ---------- SHOP (schermata game over) ----------
@@ -1000,9 +1045,12 @@ function create() {
     lastZone = 0;
     curZoneIdx = 0;
     isHolding = false;
+    jumpRequest = false;
+    jumpRequestCharged = false;
     runCoins = 0;
     loadPersisted();
     loadUpgrades();
+    loadDifficulty();
     bossIndex = loadBossesDefeated(); // Carica i boss sconfitti precedenti
     loadCheckpoints();
     shieldCharges = upLevels.shield;
@@ -1011,7 +1059,7 @@ function create() {
     bossActive = false;
 
     // Reset checkpoints
-    checkpointPlatforms = this.physics.add.group();
+    checkpointPlatforms = this.physics.add.staticGroup();
     respawnCheckpointPlatform = null;
 
     // Sfondo Gradiente (segue la camera in scorrimento verticale)
@@ -1039,24 +1087,30 @@ function create() {
     }
     nextSpawnY = 570 - (7 * SPAWN_GAP);
 
-    // CHECKPOINT: se c'è un checkpoint salvato, crea una piattaforma lì (per il respawn)
+    // CHECKPOINT: ricrea piattaforma e bandiera salvate, poi riparti da lì
     if (highestCheckpointY > 0) {
         let checkpointY = 570 - highestCheckpointY;
-        let cpPlat = platforms.create(200, checkpointY, 'platform');
+        let cpPlat = platforms.create(highestCheckpointX, checkpointY, 'platform');
         cpPlat.refreshBody();
         cpPlat.setData('type', 'normal');
         cpPlat.setData('checkpoint', true);
         respawnCheckpointPlatform = cpPlat;
+        createCheckpointMarker(this, cpPlat.x, checkpointY, cpPlat, true);
+        nextSpawnY = checkpointY - SPAWN_GAP;
     }
 
     // Giocatore
     // START BOOST: si parte piu' in alto in base al livello acquistato
-    let startY = 450 - 150 * upLevels.boost;
-    player = this.physics.add.sprite(200, startY, 'player');
+    let startY = respawnCheckpointPlatform
+        ? respawnCheckpointPlatform.y - 30
+        : 450 - (difficultyKey === 'nightmare' ? 0 : 150 * upLevels.boost);
+    let startX = respawnCheckpointPlatform ? respawnCheckpointPlatform.x : 200;
+    player = this.physics.add.sprite(startX, startY, 'player');
     player.setBounce(0.1);
     player.setCircle(14, 2, 2);
     player.body.setMaxVelocityY(800); // Limita velocità caduta per evitare tunneling (salto -850 passa)
     bestY = player.y;
+    lastGroundedY = player.y;
 
     // Camera vera: segue il giocatore in entrambe le direzioni.
     // Il livello resta fisso: se cadi, vedi di nuovo tutto ciò che avevi superato.
@@ -1114,8 +1168,14 @@ function create() {
     // Tracciamento pressione tasti per salto caricato (PC)
     this.input.keyboard.on('keydown-UP', () => { if (keyDownTime === 0) keyDownTime = this.time.now; });
     this.input.keyboard.on('keydown-SPACE', () => { if (keyDownTime === 0) keyDownTime = this.time.now; });
-    this.input.keyboard.on('keyup-UP', () => { keyDownTime = 0; });
-    this.input.keyboard.on('keyup-SPACE', () => { keyDownTime = 0; });
+    const releaseJump = () => {
+        let holdTime = keyDownTime > 0 ? this.time.now - keyDownTime : 0;
+        jumpRequest = true;
+        jumpRequestCharged = holdTime > 150;
+        keyDownTime = 0;
+    };
+    this.input.keyboard.on('keyup-UP', releaseJump);
+    this.input.keyboard.on('keyup-SPACE', releaseJump);
 
     // Controlli Touch JOYSTICK: il dito trascinato determina la direzione
     // Il salto caricato si attiva tenendo premuto il dito per >150ms
@@ -1139,7 +1199,12 @@ function create() {
             touchX = pointer.x;
         }
     });
-    this.input.on('pointerup', () => { touchX = null; joyStartX = null; joyDir = 0; isHolding = false; keyDownTime = 0; });
+    this.input.on('pointerup', () => {
+        let holdTime = keyDownTime > 0 ? this.time.now - keyDownTime : 0;
+        jumpRequest = true;
+        jumpRequestCharged = holdTime > 150;
+        touchX = null; joyStartX = null; joyDir = 0; isHolding = false; keyDownTime = 0;
+    });
 
     // Anello di carica touch (feedback del salto caricato)
     bulletG = this.add.graphics().setDepth(3);
@@ -1169,12 +1234,20 @@ function create() {
     }).setOrigin(1, 0).setScrollFactor(0).setInteractive({ useHandCursor: true });
     statsBtn.on('pointerdown', () => toggleStats(this));
 
+    let difficultyBtn = this.add.text(390, 48, '[DIFF]', {
+        fontSize: '10px', fill: '#ff9d00', fontFamily: 'Courier New, monospace', fontStyle: 'bold',
+        backgroundColor: '#020617', padding: { x: 3, y: 1 }
+    }).setOrigin(1, 0).setScrollFactor(0).setInteractive({ useHandCursor: true });
+    difficultyBtn.on('pointerdown', () => showDifficultyMenu(this));
+
     this.input.keyboard.on('keydown-M', toggleMusic);
+    this.input.keyboard.on('keydown-D', () => showDifficultyMenu(this));
 
     // Tutorial solo alla prima apertura
     let tutSeen = false;
     try { tutSeen = !!localStorage.getItem('neonjump_tutseen'); } catch (e) { }
     if (!tutSeen) startTutorial(this);
+    if (!difficultySelected) showDifficultyMenu(this);
 }
 
 // ---------- TUTORIAL ----------
@@ -1198,8 +1271,8 @@ function startTutorial(scene) {
         [200, 202, 'M : audio on/off', '12px', '#ffffff', false],
         [200, 240, '--- MOBILE ---', '11px', '#8899aa', false],
         [200, 263, 'TRASCINA il dito: dirigi la palla', '12px', '#ffffff', false],
-        [200, 285, 'DOPPIO TAP rapido + tieni premuto:', '12px', '#ffffff', false],
-        [200, 305, 'salto alto (anello giallo = carica attiva)', '11px', '#fff700', false],
+        [200, 285, 'NORMALE: salto automatico all\'atterraggio', '11px', '#ffffff', false],
+        [200, 305, 'TIENI PREMUTO in discesa: salto alto', '11px', '#fff700', false],
         [200, 345, 'LE REGOLE', '13px', '#a855f7', true],
         [200, 370, 'Le monete gialle diventano CREDITI', '11px', '#ffffff', false],
         [200, 390, 'Ogni 1500px: nuova zona + musica boss', '11px', '#ffffff', false],
@@ -1240,8 +1313,43 @@ function dismissTutorial(scene) {
     try { localStorage.setItem('neonjump_tutseen', '1'); } catch (e) { }
 }
 
+function showDifficultyMenu(scene) {
+    if (difficultyMenuVisible) return;
+    difficultyMenuVisible = true;
+    scene.physics.pause();
+    let overlay = scene.add.graphics().setScrollFactor(0).setDepth(30);
+    overlay.fillStyle(0x020617, 0.98);
+    overlay.fillRect(0, 0, 400, 600);
+    overlay.lineStyle(2, C_CYAN, 1);
+    overlay.strokeRoundedRect(22, 48, 356, 504, 10);
+
+    scene.add.text(200, 92, 'SCEGLI DIFFICOLTA\'', {
+        fontSize: '21px', fill: C_CYAN_CSS, fontFamily: 'Courier New, monospace', fontStyle: 'bold'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(31);
+    scene.add.text(200, 125, 'FREQUENZA CHECKPOINT', {
+        fontSize: '11px', fill: '#8899aa', fontFamily: 'Courier New, monospace'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(31);
+    Object.keys(DIFFICULTIES).forEach((key, i) => {
+        let difficulty = DIFFICULTIES[key];
+        let y = 190 + i * 70;
+        let button = scene.add.text(200, y,
+            difficulty.name + '  /  OGNI ' + difficulty.checkpointInterval + ' PX', {
+                fontSize: '13px', fill: '#ffffff', fontFamily: 'Courier New, monospace',
+                fontStyle: 'bold', backgroundColor: key === 'nightmare' ? '#3b1020' : '#101b2d',
+                padding: { x: 10, y: 9 }, align: 'center'
+            }).setOrigin(0.5).setScrollFactor(0).setDepth(31)
+            .setInteractive({ useHandCursor: true });
+        button.on('pointerdown', () => chooseDifficulty(scene, key));
+    });
+    scene.add.text(200, 490, 'INCUBO: START BOOST disattivato', {
+        fontSize: '10px', fill: '#ff9d00', fontFamily: 'Courier New, monospace'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(31);
+}
+
 function update(time, delta) {
     if (gameOver || tutorialActive) return;
+
+    if (player.body.touching.down) lastGroundedY = player.y;
 
     // Movimento: accelerazione progressiva, potenziata dall'upgrade CONTROL
     let isMoving = false;
@@ -1365,9 +1473,7 @@ function update(time, delta) {
 
     // Sui TRABALLANTI il salto e' manuale: se sei in piedi e premi/tocchi, salti
     // (non c'e' auto-rimbalzo, quindi senza questo non potresti piu' partire)
-    if (player.body.touching.down && (jumpPressedEdge ||
-        Phaser.Input.Keyboard.JustDown(spaceBar) ||
-        Phaser.Input.Keyboard.JustDown(cursors.up))) {
+    if (player.body.touching.down && jumpRequest) {
         let onWobbly = false;
         platforms.children.iterate(child => {
             if (child && child.getData('type') === 'wobbly' &&
@@ -1376,8 +1482,7 @@ function update(time, delta) {
         });
         if (onWobbly) {
             let bm = 1 + 0.06 * upLevels.bounce;
-            let holdTime = keyDownTime > 0 ? (this.time.now - keyDownTime) : 0;
-            let charged = holdTime > 150;
+            let charged = jumpRequestCharged;
             player.setVelocityY((charged ? -800 : -550) * bm);
             sfxJump(charged);
             player.squashing = true;
@@ -1388,6 +1493,8 @@ function update(time, delta) {
                 onComplete: () => { player.squashing = false; }
             });
         }
+        jumpRequest = false;
+        jumpRequestCharged = false;
     }
     jumpPressedEdge = false;
 
@@ -1420,8 +1527,9 @@ function update(time, delta) {
     }
     updateBossBullets(this, delta);
 
-    // Safety: se cadi oltre la zona di culling → respawn a checkpoint o game over
-    if (player.y > cullLine) {
+    // Safety: la morte dipende dalla distanza dall'ultimo appoggio, non dalla camera
+    let fallLine = lastGroundedY + FALL_DEATH_DISTANCE;
+    if (player.body.velocity.y > 0 && player.y > fallLine) {
         if (respawnCheckpointPlatform !== null && respawnCheckpointPlatform.y < player.y) {
             // Respawn all'ultimo checkpoint
             respawnAtCheckpoint(this);
@@ -1558,7 +1666,7 @@ function spawnPlatform(scene, yPos) {
     // CHECKPOINT: ogni CHECKPOINT_INTERVAL px saliti, una piattaforma diventa checkpoint
     // La piattaforma più vicina alla multipla di CHECKPOINT_INTERVAL viene marcata
     let prevClimbed = climbed - SPAWN_GAP;
-    let isCheckpoint = Math.floor(climbed / CHECKPOINT_INTERVAL) > Math.floor(prevClimbed / CHECKPOINT_INTERVAL);
+    let isCheckpoint = Math.floor(climbed / checkpointInterval) > Math.floor(prevClimbed / checkpointInterval);
 
     if (isCheckpoint) {
         type = 'normal'; // checkpoint è sempre piattaforma normale
@@ -1576,23 +1684,8 @@ function spawnPlatform(scene, yPos) {
 
     // CHECKPOINT: aggiunge la bandiera sopra la piattaforma
     if (isCheckpoint) {
-        let cp = scene.physics.add.image(x, yPos - 28, 'checkpoint').setDepth(5);
-        cp.body.setImmovable(true);
-        cp.body.setAllowGravity(false);
-        cp.setData('yPos', yPos);
-        cp.setData('activated', false);
-        cp.setData('platform', platform);
-        checkpointPlatforms.add(cp);
+        createCheckpointMarker(scene, x, yPos, platform, false);
         platform.setData('checkpoint', true);
-        // Effetto glow pulsante
-        scene.tweens.add({
-            targets: cp,
-            scaleX: 1.1, scaleY: 1.1,
-            duration: 600,
-            yoyo: true,
-            repeat: -1,
-            ease: 'Sine.easeInOut'
-        });
     }
 
     if (Math.random() < 0.35) {
@@ -1614,6 +1707,24 @@ function spawnPlatform(scene, yPos) {
         enemy.setVelocityX(Phaser.Math.Between(60, 120) * (Math.random() < 0.5 ? 1 : -1));
         enemy.setBounce(1);
     }
+}
+
+function createCheckpointMarker(scene, x, yPos, platform, activated) {
+    let cp = checkpointPlatforms.create(x, yPos - 28, 'checkpoint').setDepth(5);
+    cp.refreshBody();
+    cp.setData('yPos', yPos);
+    cp.setData('activated', activated);
+    cp.setData('platform', platform);
+    if (activated) cp.setTint(0x00ff9d);
+
+    scene.tweens.add({
+        targets: cp,
+        scaleX: 1.1, scaleY: 1.1,
+        duration: 600,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+    });
 }
 
 function collectCoin(player, coin) {
@@ -1639,6 +1750,7 @@ function activateCheckpoint(player, checkpoint) {
     let climbed = 570 - cpY;
     if (climbed > highestCheckpointY) {
         highestCheckpointY = climbed;
+        highestCheckpointX = cpPlatform.x;
         saveCheckpoints();
     }
 
@@ -1695,16 +1807,18 @@ function respawnAtCheckpoint(scene) {
     }
 
     // Teletrasporto al checkpoint (sopra la piattaforma)
-    player.setPosition(cpX, cpY - 30);
+    let respawnY = cpY - 26;
+    player.body.reset(cpX, respawnY);
     player.setVelocity(0, 0);
-    bestY = cpY - 30;
+    lastGroundedY = respawnY;
+    bestY = respawnY;
 
     // Aggiorna HUD
     creditsHud.setText('CREDITS: ' + (credits + runCoins));
 
     // Feedback visivo
     scene.cameras.main.flash(300, 255, 100, 0);
-    scene.cameras.main.centerOn(cpX, cpY - 30);
+    scene.cameras.main.centerOn(cpX, respawnY);
     beep(330, 0.2, 'sawtooth', 0.06, 110);
 
     // Testo "RESPAWN!"
@@ -1735,6 +1849,12 @@ function hitEnemy(player, enemy) {
 function triggerGameOver(scene, reason) {
     gameOver = true;
     scene.physics.pause();
+    if (boss) {
+        boss.g.destroy();
+        boss = null;
+    }
+    bossBullets = [];
+    bulletG.clear();
     savePersisted();
     sfxDeath();
 
