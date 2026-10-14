@@ -6,8 +6,8 @@ exec >> /tmp/cline-port-visibility.log 2>&1
 
 if [ ! -d node_modules/ws ]; then
   if ! npm install --no-audit --no-fund; then
-    echo "Installazione dipendenze bridge non riuscita." >&2
-    exit 1
+    echo "ERRORE: installazione dipendenze bridge non riuscita; bridge non avviato." >&2
+    exit 0
   fi
 fi
 
@@ -16,12 +16,12 @@ if ! pgrep -f '[n]ode server.js' >/dev/null; then
 fi
 
 if ! command -v gh >/dev/null 2>&1; then
-  echo "GitHub CLI non disponibile; impossibile pubblicare la porta 3000." >&2
-  exit 1
+  echo "ERRORE: GitHub CLI non disponibile; bridge avviato ma porta 3000 non pubblicata." >&2
+  exit 0
 fi
 if [ -z "${CODESPACE_NAME:-}" ]; then
-  echo "CODESPACE_NAME non impostato; impossibile selezionare il Codespace per la porta 3000." >&2
-  exit 1
+  echo "ERRORE: CODESPACE_NAME non impostato; bridge avviato ma porta 3000 non pubblicata." >&2
+  exit 0
 fi
 
 attempt=1
@@ -36,5 +36,5 @@ while [ "$attempt" -le 12 ]; do
   attempt=$((attempt + 1))
 done
 
-echo "Impossibile pubblicare la porta 3000; controlla autenticazione GH CLI e policy Codespaces." >&2
-exit 1
+echo "ERRORE: impossibile pubblicare la porta 3000; bridge lasciato attivo per la diagnosi." >&2
+exit 0
