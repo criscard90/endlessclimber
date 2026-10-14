@@ -458,6 +458,40 @@ function conversationKey(clientId, conversationId) {
     return JSON.stringify([clientId, conversationId]);
 }
 
+function sanitizeErrorText(value) {
+    return String(value)
+        .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
+        .replace(/\bsk-or-v1-[a-zA-Z0-9_-]+\b/g, '[REDACTED]')
+        .replace(/(api[_-]?key["'\s:=]+)[^\s,"'}]+/gi, '$1[REDACTED]')
+        .trim()
+        .slice(0, 1200);
+}
+
+function formatClineError(errorEvent) {
+    const details = [];
+    const addDetail = (label, value) => {
+        if (typeof value === 'string' && value.trim()) {
+            details.push(`${label}: ${sanitizeErrorText(value)}`);
+        } else if (typeof value === 'number' || typeof value === 'boolean') {
+            details.push(`${label}: ${value}`);
+        } else if (value && typeof value === 'object') {
+            for (const key of ['message', 'text', 'code', 'status', 'statusCode', 'details', 'reason']) {
+                addDetail(key, value[key]);
+            }
+        }
+    };
+
+    for (const key of ['text', 'message', 'error', 'details', 'reason', 'code', 'status', 'statusCode']) {
+        addDetail(key, errorEvent[key]);
+    }
+    if (details.length) return [...new Set(details)].join(' — ').slice(0, 1600);
+
+    const fields = Object.keys(errorEvent).filter((key) => key !== 'type');
+    return fields.length
+        ? `Cline reported an error without a readable message (fields: ${fields.join(', ')}). Check bridge logs.`
+        : 'Cline reported an error without details. Check bridge logs.';
+}
+
 // Validate a GitHub token by calling the API; returns the user on success
 async function fetchUser(token) {
     const response = await fetch('https://api.github.com/user', {
@@ -627,7 +661,9 @@ function handleClineEvent(clientId, evt) {
             sendTo(clientId, { type: 'chat_stream', payload: { text: delta } });
         }
     } else if (e.type === 'error') {
-        sendTo(clientId, { type: 'error', payload: { error: e.text || e.message || 'Cline error' } });
+        const error = formatClineError(e);
+        console.error('Cline agent error:', error);
+        sendTo(clientId, { type: 'error', payload: { error } });
     }
     // other event types (iteration_*, usage, notice, done) are ignored for now
 }
@@ -703,6 +739,7 @@ module.exports = {
     buildClineArgs,
     conversationKey,
     extractDelta,
+    formatClineError,
     fetchUser,
     handleMessage
 };
