@@ -11,7 +11,7 @@ if [ ! -d node_modules/ws ]; then
   fi
 fi
 
-if ! pgrep -f '[n]ode server.js' >/dev/null; then
+if ! pgrep -f '^node server\.js$' >/dev/null; then
   nohup node server.js > /tmp/cline-bridge.log 2>&1 < /dev/null &
 fi
 
