@@ -11,6 +11,21 @@ if [ ! -d node_modules/ws ]; then
   fi
 fi
 
+if ! command -v cline >/dev/null 2>&1; then
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "ERRORE: npm non disponibile; impossibile installare Cline CLI." >&2
+    exit 1
+  fi
+  if ! npm install --global --no-audit --no-fund cline; then
+    echo "ERRORE: installazione Cline CLI non riuscita; bridge non avviato." >&2
+    exit 1
+  fi
+fi
+if ! command -v cline >/dev/null 2>&1; then
+  echo "ERRORE: Cline CLI non trovato nel PATH dopo l'installazione." >&2
+  exit 1
+fi
+
 if ! pgrep -f '[n]ode .*server\.js' >/dev/null; then
   if ! command -v setsid >/dev/null 2>&1; then
     echo "ERRORE: setsid non disponibile; bridge non avviato." >&2
