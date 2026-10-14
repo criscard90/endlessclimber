@@ -218,7 +218,7 @@ function handleWebSocketConnection(ws, request) {
             const message = JSON.parse(data.toString());
             Promise.resolve(handleMessage(clientId, message)).catch((e) => {
                 console.error('Message handling error:', e);
-                sendTo(clientId, { type: 'error', payload: { error: `Errore interno: ${e.message}` } });
+                sendTo(clientId, { type: 'error', payload: { error: `Internal error: ${e.message}` } });
             });
         } catch (e) {
             ws.send(JSON.stringify({
@@ -260,7 +260,7 @@ function requireAuth(clientId) {
     if (authedClients.has(clientId)) return true;
     sendTo(clientId, {
         type: 'error',
-        payload: { error: 'Non autenticato: invia prima un messaggio auth con un token GitHub valido' }
+        payload: { error: 'Not authenticated: send an auth message with a valid GitHub token first' }
     });
     return false;
 }
@@ -296,7 +296,7 @@ async function handleAuth(clientId, message) {
         } else {
             sendTo(clientId, {
                 type: 'auth_error',
-                payload: { error: 'Nessun token GitHub: configura GITHUB_TOKEN oppure autenticati dall\'app' }
+                payload: { error: 'No GitHub token: configure GITHUB_TOKEN or authenticate from the app' }
             });
         }
     } catch (e) {
@@ -318,19 +318,22 @@ function handleChatMessage(clientId, message) {
     const provider = payload.provider;
     const model = payload.model;
     const apiKey = payload.apiKey;
+    const conversationId = typeof payload.conversationId === 'string' && payload.conversationId.trim()
+        ? payload.conversationId.trim()
+        : 'default';
     if (provider !== 'openrouter') {
-        sendTo(clientId, { type: 'error', payload: { error: 'Provider non supportato: seleziona OpenRouter nell’app.' } });
+        sendTo(clientId, { type: 'error', payload: { error: 'Unsupported provider: select OpenRouter in the app.' } });
         return;
     }
     if (typeof model !== 'string' || !model.endsWith(':free')) {
-        sendTo(clientId, { type: 'error', payload: { error: 'Seleziona un modello gratuito OpenRouter compatibile con Cline.' } });
+        sendTo(clientId, { type: 'error', payload: { error: 'Select a free OpenRouter model that is compatible with Cline.' } });
         return;
     }
     if (typeof apiKey !== 'string' || !apiKey.trim()) {
-        sendTo(clientId, { type: 'error', payload: { error: 'Chiave OpenRouter mancante: configurala nelle Impostazioni dell’app.' } });
+        sendTo(clientId, { type: 'error', payload: { error: 'OpenRouter key missing: configure it in the app Settings.' } });
         return;
     }
-    runCline(clientId, text.trim(), { provider, model, apiKey: apiKey.trim() });
+    runCline(clientId, conversationId, text.trim(), { provider, model, apiKey: apiKey.trim() });
 }
 
 async function handleMessage(clientId, message) {
@@ -451,6 +454,10 @@ function msgId() {
     return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+function conversationKey(clientId, conversationId) {
+    return JSON.stringify([clientId, conversationId]);
+}
+
 // Validate a GitHub token by calling the API; returns the user on success
 async function fetchUser(token) {
     const response = await fetch('https://api.github.com/user', {
@@ -484,10 +491,11 @@ function buildClineArgs(config = {}) {
 // replays recent conversation context in the prompt, working around the broken
 // `--id` resume in --json mode (cline/cline#10856). Streams NDJSON events back
 // to the app as chat_stream / chat_message / error bridge messages.
-function runCline(clientId, userText, config) {
+function runCline(clientId, conversationId, userText, config) {
     stopCline(clientId);
 
-    const history = conversations.get(clientId) || [];
+    const contextKey = conversationKey(clientId, conversationId);
+    const history = conversations.get(contextKey) || [];
     const recent = history.slice(-MAX_HISTORY_MESSAGES);
     const transcript = recent
         .map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
@@ -500,7 +508,7 @@ function runCline(clientId, userText, config) {
     try {
         configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cline-mobile-'));
     } catch (e) {
-        sendTo(clientId, { type: 'error', payload: { error: `Impossibile preparare la configurazione Cline: ${e.message}` } });
+        sendTo(clientId, { type: 'error', payload: { error: `Unable to prepare Cline configuration: ${e.message}` } });
         return;
     }
     const args = buildClineArgs({ ...config, configDir });
@@ -513,7 +521,7 @@ function runCline(clientId, userText, config) {
         fs.rm(configDir, { recursive: true, force: true }, (cleanupError) => {
             if (cleanupError) console.error('Cline config cleanup failed:', cleanupError.message);
         });
-        sendTo(clientId, { type: 'error', payload: { error: `Impossibile avviare Cline: ${e.message}` } });
+        sendTo(clientId, { type: 'error', payload: { error: `Unable to start Cline: ${e.message}` } });
         return;
     }
     runningTasks.set(clientId, child);
@@ -582,7 +590,7 @@ function runCline(clientId, userText, config) {
         }
 
         if (finalText != null) {
-            conversations.set(clientId, [
+            conversations.set(contextKey, [
                 ...history,
                 { role: 'user', content: userText },
                 { role: 'assistant', content: finalText }
@@ -592,7 +600,7 @@ function runCline(clientId, userText, config) {
                 payload: { message: { id: msgId(), role: 'assistant', content: finalText, timestamp: Date.now() } }
             });
         } else if (wasStopped) {
-            conversations.set(clientId, [
+            conversations.set(contextKey, [
                 ...history,
                 { role: 'user', content: userText },
                 { role: 'assistant', content: partial || '(interrotto)' }
@@ -604,7 +612,7 @@ function runCline(clientId, userText, config) {
         } else if (errMessage) {
             sendTo(clientId, { type: 'error', payload: { error: errMessage } });
         } else {
-            sendTo(clientId, { type: 'error', payload: { error: `Cline uscito senza output (codice ${code})` } });
+            sendTo(clientId, { type: 'error', payload: { error: `Cline exited without output (code ${code})` } });
         }
     });
 }
@@ -693,6 +701,7 @@ module.exports = {
     serverState,
     // Cline integration + auth helpers (exposed for tests)
     buildClineArgs,
+    conversationKey,
     extractDelta,
     fetchUser,
     handleMessage
